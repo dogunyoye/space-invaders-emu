@@ -7,11 +7,12 @@
 #include <vector>
 
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_mixer.h>
 
 #include "ArcadeHardware.h"
+#include "Audio.h"
 #include "Disassembler8080.h"
 #include "Emulator8080.h"
+#include "Input.h"
 #include "Renderer.h"
 #include "State8080.h"
 
@@ -21,34 +22,7 @@ namespace {
 const int CYCLES_PER_FRAME = 33333;
 const int CYCLES_PER_HALF = CYCLES_PER_FRAME / 2;
 
-// IN1 (port 1) bit masks — active high.
-const uint8_t IN1_COIN = 0x01;
-const uint8_t IN1_P2_START = 0x02;
-const uint8_t IN1_P1_START = 0x04;
-const uint8_t IN1_P1_SHOOT = 0x10;
-const uint8_t IN1_P1_LEFT = 0x20;
-const uint8_t IN1_P1_RIGHT = 0x40;
-
-// IN2 (port 2) bit masks — active high (except DIP/coin-info, see below).
-const uint8_t IN2_TILT = 0x04;
-const uint8_t IN2_P2_SHOOT = 0x10;
-const uint8_t IN2_P2_LEFT = 0x20;
-const uint8_t IN2_P2_RIGHT = 0x40;
-// DIP defaults: 3 ships (bits 0-1 = 00), extra ship at 1500 (bit 3 = 0),
-// coin info ON in demo (bit 7 = 0).
-const uint8_t IN2_DIP_DEFAULT = 0x00;
-
-// Sound sample slots. Index by MAME-style numbers:
-// 0=UFO(loop) 1=shot 2=base hit 3=invader hit 4=extended play
-// 5..8=fleet 1..4 (port5 bits 0..3) — plus UFO-hit on port5 bit4.
-struct SoundBank {
-    std::array<Mix_Chunk *, 10> chunk{};
-    int ufo_channel = -1;
-
-    SoundBank() { chunk.fill(nullptr); }
-};
-
-SoundBank g_sounds;
+uint32_t crc32_bytes(const uint8_t *data, size_t len);
 
 std::string exe_dir() {
     char *base = SDL_GetBasePath();
@@ -96,146 +70,83 @@ bool load_rom(State8080 &state, const std::string &filename, uint16_t offset) {
         std::cerr << "ROM file " << path << " exceeds memory bounds!" << std::endl;
         return false;
     }
+    if (size != 2048 && offset < 0x2000) {
+        std::cerr << "Warning: " << path << " size " << size
+                  << " != 2048 (expected invaders chunk)" << std::endl;
+    }
 
     if (file.read(reinterpret_cast<char *>(&state.memory[offset]), size)) {
+        uint32_t crc = crc32_bytes(&state.memory[offset], (size_t)size);
         std::cout << "Loaded " << path << " at 0x" << std::hex << offset
-                  << " (" << std::dec << size << " bytes)" << std::endl;
+                  << " (" << std::dec << size << " bytes, crc32=0x" << std::hex << crc << std::dec << ")"
+                  << std::endl;
         return true;
     }
     std::cerr << "Failed to read ROM file: " << path << std::endl;
     return false;
 }
 
-void load_sound_slot(int slot, const std::vector<std::string> &names) {
-    for (const auto &n : names) {
-        std::string path = resolve_asset(n);
-        Mix_Chunk *c = Mix_LoadWAV(path.c_str());
-        if (c) {
-            g_sounds.chunk[slot] = c;
-            return;
-        }
+// CRC32 (IEEE) for ROM validation logging.
+uint32_t crc32_bytes(const uint8_t *data, size_t len) {    uint32_t crc = 0xFFFFFFFFu;
+    for (size_t i = 0; i < len; ++i) {
+        crc ^= data[i];
+        for (int k = 0; k < 8; ++k) crc = (crc & 1) ? (crc >> 1) ^ 0xEDB88320u : (crc >> 1);
     }
-    // Missing samples are non-fatal: game runs silent for that effect.
-    std::cerr << "Warning: sound " << slot << " not found (tried";
-    for (const auto &n : names) std::cerr << " " << n;
-    std::cerr << "); continuing silent." << std::endl;
+    return ~crc;
 }
 
-bool init_audio() {
-    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
-        std::cerr << "Mix_OpenAudio failed: " << Mix_GetError()
-                  << " (continuing without audio)" << std::endl;
-        return false;
-    }
-    Mix_AllocateChannels(16);
-
-    // Accept both MAME-style numeric names and descriptive names.
-    load_sound_slot(0, {"assets/0.wav", "assets/ufo.wav"});
-    load_sound_slot(1, {"assets/1.wav", "assets/shoot.wav"});
-    load_sound_slot(2, {"assets/2.wav", "assets/explosion.wav", "assets/basehit.wav"});
-    load_sound_slot(3, {"assets/3.wav", "assets/invhit.wav"});
-    load_sound_slot(4, {"assets/extended.wav", "assets/4_extend.wav"});
-    load_sound_slot(5, {"assets/4.wav", "assets/walk1.wav"});
-    load_sound_slot(6, {"assets/5.wav", "assets/walk2.wav"});
-    load_sound_slot(7, {"assets/6.wav", "assets/walk3.wav"});
-    load_sound_slot(8, {"assets/7.wav", "assets/walk4.wav"});
-    load_sound_slot(9, {"assets/8.wav", "assets/ufohit.wav"});
-    arcade_sound_reset();
-    return true;
+bool save_state(const State8080 &state, const std::string &path) {
+    std::ofstream f(path, std::ios::binary);
+    if (!f) return false;
+    f.write(reinterpret_cast<const char *>(&state.a), 1);
+    f.write(reinterpret_cast<const char *>(&state.b), 1);
+    f.write(reinterpret_cast<const char *>(&state.c), 1);
+    f.write(reinterpret_cast<const char *>(&state.d), 1);
+    f.write(reinterpret_cast<const char *>(&state.e), 1);
+    f.write(reinterpret_cast<const char *>(&state.h), 1);
+    f.write(reinterpret_cast<const char *>(&state.l), 1);
+    f.write(reinterpret_cast<const char *>(&state.sp), 2);
+    f.write(reinterpret_cast<const char *>(&state.pc), 2);
+    uint8_t flags = (uint8_t)((state.cc.s << 7) | (state.cc.z << 6) | (state.cc.ac << 4) |
+                             (state.cc.p << 2) | (state.cc.cy));
+    f.write(reinterpret_cast<const char *>(&flags), 1);
+    f.write(reinterpret_cast<const char *>(&state.int_enable), 1);
+    f.write(reinterpret_cast<const char *>(&state.port1), 1);
+    f.write(reinterpret_cast<const char *>(&state.port2), 1);
+    f.write(reinterpret_cast<const char *>(&state.shift_register), 2);
+    f.write(reinterpret_cast<const char *>(&state.shift_offset), 1);
+    f.write(reinterpret_cast<const char *>(state.memory.data()), state.memory.size());
+    return (bool)f;
 }
 
-void play_slot(int slot) {
-    Mix_Chunk *c = (slot >= 0 && slot < 10) ? g_sounds.chunk[slot] : nullptr;
-    if (c) Mix_PlayChannel(-1, c, 0);
-}
-
-// Edge-triggered sounds. Port 3 bit 0 (UFO) is level-looped; everything else
-// fires on a 0->1 edge.
-void poll_arcade_sounds() {
-    uint8_t o3 = arcade_last_out3();
-    uint8_t p3 = arcade_last_out3_prev();
-    uint8_t o5 = arcade_last_out5();
-    uint8_t p5 = arcade_last_out5_prev();
-    uint8_t edge3 = (uint8_t)((o3 ^ p3) & o3);
-    uint8_t edge5 = (uint8_t)((o5 ^ p5) & o5);
-
-    // UFO looping sound.
-    bool ufo_on = (o3 & 0x01) != 0;
-    bool ufo_was = (p3 & 0x01) != 0;
-    if (ufo_on && !ufo_was) {
-        if (g_sounds.chunk[0])
-            g_sounds.ufo_channel = Mix_PlayChannel(-1, g_sounds.chunk[0], -1);
-    } else if (!ufo_on && ufo_was) {
-        if (g_sounds.ufo_channel >= 0) {
-            Mix_HaltChannel(g_sounds.ufo_channel);
-            g_sounds.ufo_channel = -1;
-        }
-    }
-
-    if (edge3 & 0x02) play_slot(1);  // shot
-    if (edge3 & 0x04) play_slot(2);  // base hit
-    if (edge3 & 0x08) play_slot(3);  // invader hit
-    if (edge3 & 0x10) play_slot(4);  // extended play
-    if (edge5 & 0x01) play_slot(5);  // fleet 1
-    if (edge5 & 0x02) play_slot(6);  // fleet 2
-    if (edge5 & 0x04) play_slot(7);  // fleet 3
-    if (edge5 & 0x08) play_slot(8);  // fleet 4
-    if (edge5 & 0x10) play_slot(9);  // UFO hit
-
-    arcade_ack_sound();
-}
-
-void shutdown_audio() {
-    if (g_sounds.ufo_channel >= 0) Mix_HaltChannel(g_sounds.ufo_channel);
-    for (auto *c : g_sounds.chunk) {
-        if (c) Mix_FreeChunk(c);
-    }
-    g_sounds.chunk.fill(nullptr);
-    Mix_CloseAudio();
-}
-
-void set_bit(uint8_t &port, uint8_t mask, bool pressed) {
-    if (pressed)
-        port |= mask;
-    else
-        port &= (uint8_t)~mask;
-}
-
-void handle_key(State8080 &state, SDL_Keycode sym, bool pressed) {
-    switch (sym) {
-        case SDLK_c:  // coin
-            set_bit(state.port1, IN1_COIN, pressed);
-            break;
-        case SDLK_1:  // P1 start
-            set_bit(state.port1, IN1_P1_START, pressed);
-            break;
-        case SDLK_2:  // P2 start
-            set_bit(state.port1, IN1_P2_START, pressed);
-            break;
-        case SDLK_SPACE:  // P1 shoot
-            set_bit(state.port1, IN1_P1_SHOOT, pressed);
-            break;
-        case SDLK_LEFT:  // P1 left
-            set_bit(state.port1, IN1_P1_LEFT, pressed);
-            break;
-        case SDLK_RIGHT:  // P1 right
-            set_bit(state.port1, IN1_P1_RIGHT, pressed);
-            break;
-        case SDLK_w:  // P2 shoot
-            set_bit(state.port2, IN2_P2_SHOOT, pressed);
-            break;
-        case SDLK_a:  // P2 left
-            set_bit(state.port2, IN2_P2_LEFT, pressed);
-            break;
-        case SDLK_d:  // P2 right
-            set_bit(state.port2, IN2_P2_RIGHT, pressed);
-            break;
-        case SDLK_t:  // tilt
-            set_bit(state.port2, IN2_TILT, pressed);
-            break;
-        default:
-            break;
-    }
+bool load_state(State8080 &state, const std::string &path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    uint8_t flags = 0;
+    f.read(reinterpret_cast<char *>(&state.a), 1);
+    f.read(reinterpret_cast<char *>(&state.b), 1);
+    f.read(reinterpret_cast<char *>(&state.c), 1);
+    f.read(reinterpret_cast<char *>(&state.d), 1);
+    f.read(reinterpret_cast<char *>(&state.e), 1);
+    f.read(reinterpret_cast<char *>(&state.h), 1);
+    f.read(reinterpret_cast<char *>(&state.l), 1);
+    f.read(reinterpret_cast<char *>(&state.sp), 2);
+    f.read(reinterpret_cast<char *>(&state.pc), 2);
+    f.read(reinterpret_cast<char *>(&flags), 1);
+    f.read(reinterpret_cast<char *>(&state.int_enable), 1);
+    f.read(reinterpret_cast<char *>(&state.port1), 1);
+    f.read(reinterpret_cast<char *>(&state.port2), 1);
+    f.read(reinterpret_cast<char *>(&state.shift_register), 2);
+    f.read(reinterpret_cast<char *>(&state.shift_offset), 1);
+    f.read(reinterpret_cast<char *>(state.memory.data()), state.memory.size());
+    state.cc.s = (flags >> 7) & 1;
+    state.cc.z = (flags >> 6) & 1;
+    state.cc.ac = (flags >> 4) & 1;
+    state.cc.p = (flags >> 2) & 1;
+    state.cc.cy = flags & 1;
+    state.halted = 0;
+    state.emulation_error = false;
+    return (bool)f;
 }
 
 // Run all pending cycles up to a budget. A halted CPU just burns cycles
@@ -341,16 +252,22 @@ int run_disassembly(const std::string &rom_path, uint16_t offset, int count) {
 void print_help(const char *prog) {
     std::cout << "Usage:\n"
               << "  " << prog << "                 Run Space Invaders (roms/invaders.e-h)\n"
+              << "  " << prog << " [--no-color]      Disable overlay colors\n"
               << "  " << prog << " --test <rom> [--trace]  Run 8080 CPU diagnostic (CPUTEST.COM, TST8080.COM, 8080PRE.COM)\n"
               << "  " << prog << " --dis <rom> [offset_hex] [count]  Disassemble ROM bytes\n"
               << "  " << prog << " --help          Show this help\n\n"
               << "Keys: C=coin 1=P1 start 2=P2 start  Arrows=P1 move  Space=P1 fire\n"
-              << "      W/A/D=P2 fire/left/right  T=tilt  Esc=quit\n";
+              << "      W/A/D=P2 fire/left/right  T=tilt  P=pause  F5=save F9=load  Esc=quit\n"
+              << "Gamepad: DPad=move A/B/X=fire Start=start Back=coin\n";
 }
 
 }  // namespace
 
 int main(int argc, char *argv[]) {
+    bool use_color = true;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--no-color") use_color = false;
+    }
     if (argc >= 2) {
         std::string arg = argv[1];
         if (arg == "--help" || arg == "-h") {
@@ -378,7 +295,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) < 0) {
         std::cerr << "SDL could not initialize! SDL_Error: " << SDL_GetError() << std::endl;
         return 1;
     }
@@ -437,7 +354,20 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    SDL_GameController *pad = nullptr;
+    for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+        if (SDL_IsGameController(i)) {
+            pad = SDL_GameControllerOpen(i);
+            if (pad) {
+                std::cout << "Gamepad: " << SDL_GameControllerName(pad) << std::endl;
+                break;
+            }
+        }
+    }
+
     bool quit = false;
+    bool paused = false;
+    const std::string save_path = "save.bin";
     SDL_Event e;
 
     const double TARGET_FPS = 60.0;
@@ -449,24 +379,41 @@ int main(int argc, char *argv[]) {
         while (SDL_PollEvent(&e) != 0) {
             if (e.type == SDL_QUIT) {
                 quit = true;
-            } else if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
-                if (e.key.keysym.sym == SDLK_ESCAPE && e.type == SDL_KEYDOWN) {
+            } else if (e.type == SDL_KEYDOWN && e.key.repeat == 0) {
+                if (e.key.keysym.sym == SDLK_ESCAPE) {
                     quit = true;
                     break;
                 }
-                if (e.key.repeat == 0) handle_key(state, e.key.keysym.sym, e.type == SDL_KEYDOWN);
+                if (e.key.keysym.sym == SDLK_p) {
+                    paused = !paused;
+                    std::cout << (paused ? "[paused]" : "[resumed]") << std::endl;
+                }
+                if (e.key.keysym.sym == SDLK_F5) {
+                    std::cout << (save_state(state, save_path) ? "Saved " : "Save failed ") << save_path
+                              << std::endl;
+                }
+                if (e.key.keysym.sym == SDLK_F9) {
+                    std::cout << (load_state(state, save_path) ? "Loaded " : "Load failed ")
+                              << save_path << std::endl;
+                }
+                handle_key(state, e.key.keysym.sym, true);
+            } else if (e.type == SDL_KEYUP) {
+                handle_key(state, e.key.keysym.sym, false);
+            } else if (e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONUP) {
+                handle_game_button(state, e.cbutton.button, e.type == SDL_CONTROLLERBUTTONDOWN);
             }
         }
         if (quit) break;
 
-        // Half-frame of CPU, mid-screen RST 1 (0x08), half-frame, vblank RST 2 (0x10).
-        run_cycles(state, CYCLES_PER_HALF);
-        emulate_interrupt(&state, 1);
-        run_cycles(state, CYCLES_PER_HALF);
-        emulate_interrupt(&state, 2);
-
-        poll_arcade_sounds();
-        render_vram(renderer, texture, state);
+        if (!paused) {
+            // Half-frame of CPU, mid-screen RST 1 (0x08), half-frame, vblank RST 2 (0x10).
+            run_cycles(state, CYCLES_PER_HALF);
+            emulate_interrupt(&state, 1);
+            run_cycles(state, CYCLES_PER_HALF);
+            emulate_interrupt(&state, 2);
+            poll_arcade_sounds();
+        }
+        render_vram(renderer, texture, state, use_color);
 
         next_frame += frame_ticks;
         Uint64 now = SDL_GetPerformanceCounter();
@@ -485,6 +432,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    if (pad) SDL_GameControllerClose(pad);
     shutdown_audio();
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);

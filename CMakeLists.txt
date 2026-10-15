@@ -16,6 +16,8 @@ set(SOURCES
     src/Disassembler8080.cpp
     src/ArcadeHardware.cpp
     src/Renderer.cpp
+    src/Audio.cpp
+    src/Input.cpp
 )
 
 # Create the executable target
