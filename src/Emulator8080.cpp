@@ -240,24 +240,24 @@ static uint8_t flags_to_psw(const State8080 &state) {
 }
 
 static void psw_to_flags(State8080 &state, uint8_t psw) {
-    state.cc.s  = (psw >> 7) & 1;
-    state.cc.z  = (psw >> 6) & 1;
-    state.cc.ac = (psw >> 4) & 1;
-    state.cc.p  = (psw >> 2) & 1;
-    state.cc.cy = (psw >> 0) & 1;
+    state.cc.s  = ((psw >> 7) & 1) != 0;
+    state.cc.z  = ((psw >> 6) & 1) != 0;
+    state.cc.ac = ((psw >> 4) & 1) != 0;
+    state.cc.p  = ((psw >> 2) & 1) != 0;
+    state.cc.cy = ((psw >> 0) & 1) != 0;
 }
 
 // Condition field ccc = (opcode >> 3) & 7 : 0=NZ 1=Z 2=NC 3=C 4=PO 5=PE 6=P 7=M
 static bool check_condition(const State8080 &state, uint8_t ccc) {
     switch (ccc) {
-        case 0: return state.cc.z == 0; // NZ
-        case 1: return state.cc.z == 1; // Z
-        case 2: return state.cc.cy == 0; // NC
-        case 3: return state.cc.cy == 1; // C
-        case 4: return state.cc.p == 0; // PO
-        case 5: return state.cc.p == 1; // PE
-        case 6: return state.cc.s == 0; // P
-        case 7: return state.cc.s == 1; // M
+        case 0: return !state.cc.z; // NZ
+        case 1: return state.cc.z; // Z
+        case 2: return !state.cc.cy; // NC
+        case 3: return state.cc.cy; // C
+        case 4: return !state.cc.p; // PO
+        case 5: return state.cc.p; // PE
+        case 6: return !state.cc.s; // P
+        case 7: return state.cc.s; // M
         default: return false;
     }
 }
@@ -650,12 +650,12 @@ int emulate8080(State8080 *state) {
             break;
 
         case 0x37: // STC
-            state->cc.cy = 1;
+            state->cc.cy = true;
             cycles = 4;
             break;
 
         case 0x3F: // CMC
-            state->cc.cy = ~state->cc.cy & 1;
+            state->cc.cy = !state->cc.cy;
             cycles = 4;
             break;
 
