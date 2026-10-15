@@ -10,13 +10,12 @@
 #include <SDL2/SDL_mixer.h>
 
 #include "ArcadeHardware.h"
+#include "Disassembler8080.h"
 #include "Emulator8080.h"
 #include "State8080.h"
 
 // Forward declaration (implemented in Renderer.cpp)
 void render_vram(SDL_Renderer *renderer, SDL_Texture *texture, const State8080 &state);
-// Forward declaration (implemented in Disassembler8080.cpp)
-int disassemble8080(uint8_t *codebuffer, int pc);
 // Forward declaration (implemented in Emulator8080.cpp)
 void emulate_interrupt(State8080 *state, int interrupt_num);
 //Forward declaration (implemented in Emulator8080.cpp)
@@ -262,7 +261,7 @@ void run_cycles(State8080 &state, int budget) {
     }
 }
 
-int run_diagnostic(const std::string &rom_path) {
+int run_diagnostic(const std::string &rom_path, bool trace) {
     State8080 state;
 
     // CP/M test binaries are loaded at 0x100.
@@ -298,6 +297,10 @@ int run_diagnostic(const std::string &rom_path) {
             state.pc = (uint16_t)((high << 8) | low);
         }
 
+        if (trace && total_instructions < 200) {
+            int len = 1;
+            std::cout << disassemble8080_str(state.memory.data(), state.pc, &len) << "\n";
+        }
         emulate8080(&state);
         total_instructions++;
 
@@ -314,10 +317,32 @@ int run_diagnostic(const std::string &rom_path) {
     return 0;
 }
 
+int run_disassembly(const std::string &rom_path, uint16_t offset, int count) {
+    State8080 state;
+    if (!load_rom(state, rom_path, offset)) return 1;
+    int pc = offset;
+    int end = (count < 0) ? 0x10000 : (offset + count);
+    if (end > 0x10000) end = 0x10000;
+    // Stop at end of actually-loaded file when count is unlimited: we don't
+    // know file size here, so cap by scanning until a run of zeros? Instead
+    // just disassemble requested range; caller passes count for raw dumps.
+    while (pc < end) {
+        int len = 1;
+        std::cout << disassemble8080_str(state.memory.data(), pc, &len) << "\n";
+        if (len <= 0) len = 1;
+        pc += len;
+        // For unlimited mode on sparse loads, stop after 0x2000 zero tail
+        // is overkill; require explicit count. Break if pc hits 0x10000.
+        if (count < 0 && pc >= offset + 0x2000) break;
+    }
+    return 0;
+}
+
 void print_help(const char *prog) {
     std::cout << "Usage:\n"
               << "  " << prog << "                 Run Space Invaders (roms/invaders.e-h)\n"
-              << "  " << prog << " --test <rom>    Run 8080 CPU diagnostic (CPUTEST.COM, TST8080.COM, 8080PRE.COM)\n"
+              << "  " << prog << " --test <rom> [--trace]  Run 8080 CPU diagnostic (CPUTEST.COM, TST8080.COM, 8080PRE.COM)\n"
+              << "  " << prog << " --dis <rom> [offset_hex] [count]  Disassemble ROM bytes\n"
               << "  " << prog << " --help          Show this help\n\n"
               << "Keys: C=coin 1=P1 start 2=P2 start  Arrows=P1 move  Space=P1 fire\n"
               << "      W/A/D=P2 fire/left/right  T=tilt  Esc=quit\n";
@@ -337,7 +362,19 @@ int main(int argc, char *argv[]) {
                 std::cerr << "--test requires a ROM path\n";
                 return 1;
             }
-            return run_diagnostic(argv[2]);
+            bool trace = (argc >= 4 && std::string(argv[3]) == "--trace");
+            return run_diagnostic(argv[2], trace);
+        }
+        if (arg == "--dis") {
+            if (argc < 3) {
+                std::cerr << "--dis requires a ROM path\n";
+                return 1;
+            }
+            uint16_t offset = 0;
+            int count = 64;
+            if (argc >= 4) offset = (uint16_t)std::stoul(argv[3], nullptr, 16);
+            if (argc >= 5) count = std::stoi(argv[4]);
+            return run_disassembly(argv[2], offset, count);
         }
     }
 
