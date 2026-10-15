@@ -9,6 +9,7 @@
 #include <SDL2/SDL.h>
 
 #include "ArcadeHardware.h"
+#include "AIPlayer.h"
 #include "Audio.h"
 #include "Disassembler8080.h"
 #include "Emulator8080.h"
@@ -252,12 +253,12 @@ int run_disassembly(const std::string &rom_path, uint16_t offset, int count) {
 void print_help(const char *prog) {
     std::cout << "Usage:\n"
               << "  " << prog << "                 Run Space Invaders (roms/invaders.e-h)\n"
-              << "  " << prog << " [--no-color]      Disable overlay colors\n"
+              << "  " << prog << " [--no-color] [--ai-p2]  Disable overlay colors / enable AI P2\n"
               << "  " << prog << " --test <rom> [--trace]  Run 8080 CPU diagnostic (CPUTEST.COM, TST8080.COM, 8080PRE.COM)\n"
               << "  " << prog << " --dis <rom> [offset_hex] [count]  Disassemble ROM bytes\n"
               << "  " << prog << " --help          Show this help\n\n"
               << "Keys: C=coin 1=P1 start 2=P2 start  Arrows=P1 move  Space=P1 fire\n"
-              << "      W/A/D=P2 fire/left/right  T=tilt  P=pause  F5=save F9=load  Esc=quit\n"
+              << "      W/A/D=P2 fire/left/right  T=tilt  P=pause  F5=save F9=load  M=AI P2 on/off  Esc=quit\n"
               << "Gamepad: DPad=move A/B/X=fire Start=start Back=coin\n";
 }
 
@@ -265,8 +266,10 @@ void print_help(const char *prog) {
 
 int main(int argc, char *argv[]) {
     bool use_color = true;
+    bool ai_p2 = false;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--no-color") use_color = false;
+        if (std::string(argv[i]) == "--ai-p2") ai_p2 = true;
     }
     if (argc >= 2) {
         std::string arg = argv[1];
@@ -370,6 +373,10 @@ int main(int argc, char *argv[]) {
     const std::string save_path = "save.bin";
     SDL_Event e;
 
+    AIPlayer2 ai_p2_player;
+    ai_p2_player.setEnabled(ai_p2);
+    if (ai_p2_player.enabled) std::cout << "[AI P2 enabled] (M to toggle)" << std::endl;
+
     const double TARGET_FPS = 60.0;
     const Uint64 freq = SDL_GetPerformanceFrequency();
     const Uint64 frame_ticks = (Uint64)(freq / TARGET_FPS);
@@ -396,7 +403,19 @@ int main(int argc, char *argv[]) {
                     std::cout << (load_state(state, save_path) ? "Loaded " : "Load failed ")
                               << save_path << std::endl;
                 }
-                handle_key(state, e.key.keysym.sym, true);
+                if (e.key.keysym.sym == SDLK_m) {
+                    ai_p2_player.toggle();
+                    std::cout << (ai_p2_player.enabled ? "[AI P2 enabled]" : "[AI P2 disabled]")
+                              << std::endl;
+                    if (!ai_p2_player.enabled) {
+                        // Release AI-driven P2 bits so the cannon doesn't stick.
+                        set_port_bit(state.port2, IN2_P2_LEFT, false);
+                        set_port_bit(state.port2, IN2_P2_RIGHT, false);
+                        set_port_bit(state.port2, IN2_P2_SHOOT, false);
+                    }
+                } else {
+                    handle_key(state, e.key.keysym.sym, true);
+                }
             } else if (e.type == SDL_KEYUP) {
                 handle_key(state, e.key.keysym.sym, false);
             } else if (e.type == SDL_CONTROLLERBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONUP) {
@@ -406,6 +425,8 @@ int main(int argc, char *argv[]) {
         if (quit) break;
 
         if (!paused) {
+            // AI P2 drives IN2 left/right/fire before the CPU reads them.
+            if (ai_p2_player.enabled) ai_p2_player.update(state);
             // Half-frame of CPU, mid-screen RST 1 (0x08), half-frame, vblank RST 2 (0x10).
             run_cycles(state, CYCLES_PER_HALF);
             emulate_interrupt(&state, 1);

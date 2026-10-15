@@ -13,7 +13,7 @@ A Space Invaders arcade emulator written in C++17 with an SDL2 frontend. Emulate
 - SDL_mixer sound (accepts MAME-style `0.wav`-`8.wav` or descriptive names)
 - 8080 disassembler (`src/Disassembler8080.cpp`, `include/Disassembler8080.h`): `disassemble8080_str()` API plus `--dis <rom>` and `--test --trace` modes
 - CP/M diagnostic runner for `CPUTEST.COM`, `TST8080.COM`, `8080PRE.COM`
-- Unit tests (`ctest`): `cpu_tests` (flags, DAA/ANA/DCR edge cases, stack wrap) and `hw_tests` (shift register, sound latches, ports, disassembler)
+- Unit tests (`ctest`): `cpu_tests` (flags, DAA/ANA/DCR edge cases, stack wrap), `hw_tests` (shift register, sound latches, ports, disassembler), and `ai_tests` (VRAM vision, chase/dodge/fire, key release)
 - Frontend: gamepad input, pause, save/load state (`F5`/`F9` → `save.bin`), ROM size + CRC32 logging, graceful error latch instead of `exit()`
 
 ## Requirements
@@ -44,7 +44,7 @@ Binary: `build/space_invaders`
 From the project root (so `roms/` and `assets/` resolve):
 
 ```bash
-./build/space_invaders [--no-color]
+./build/space_invaders [--no-color] [--ai-p2]
 ./build/space_invaders --help
 ./build/space_invaders --test roms/CPUTEST.COM [--trace]
 ./build/space_invaders --dis roms/invaders.h 0 64
@@ -63,8 +63,15 @@ From the project root (so `roms/` and `assets/` resolve):
 | `W` | P2 fire |
 | `T` | Tilt |
 | `P` | Pause / resume |
+| `M` | Toggle AI player 2 on/off |
 | `F5` / `F9` | Save / load state (`save.bin`) |
 | `Esc` | Quit |
+
+AI player 2 (`--ai-p2` or `M`): vision-only bot that drives the P2
+left/right/fire inputs from VRAM. It chases the UFO then the lowest
+invader row, dodges close enemy bullets, and pulses fire when aligned.
+Safe to leave on during P1's turn (the ROM ignores P2 inputs then).
+To watch it play: coin (`C`), start P2 (`2`), then enable AI.
 
 Gamepad: DPad = P1 move, A/B/X = P1 fire, Start = P1 start, Back = coin.
 
@@ -80,8 +87,9 @@ include/
   ArcadeHardware.h   # arcade I/O abstraction
   Disassembler8080.h # disassemble8080_str() API
   Renderer.h         # screen constants + render_vram()
-  Audio.h            # SDL_mixer frontend
+  Audio.h          # SDL_mixer frontend
   Input.h            # keyboard + gamepad, port masks
+  AIPlayer.h         # AI P2: VRAM vision -> IN2 bits
 src/
   main.cpp           # SDL frontend, ROM loading, main loop, --test/--dis modes
   Emulator8080.cpp   # 8080 instruction set (wrapped fetches)
@@ -90,6 +98,7 @@ src/
   Disassembler8080.cpp
   Audio.cpp          # sound slots, edge-triggered playback
   Input.cpp          # key/button -> port bits
+  AIPlayer.cpp       # AI P2 controller
 tests/
   test_cpu.cpp       # cpu_tests: flags, ALU, jumps, stack/fetch wrap
   test_hardware.cpp  # hw_tests: shift reg, sound, ports, disassembler

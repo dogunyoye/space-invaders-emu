@@ -18,6 +18,7 @@ set(SOURCES
     src/Renderer.cpp
     src/Audio.cpp
     src/Input.cpp
+    src/AIPlayer.cpp
 )
 
 # Create the executable target
@@ -52,15 +53,21 @@ if (BUILD_TESTS)
         src/Emulator8080.cpp
         src/ArcadeHardware.cpp
         src/Disassembler8080.cpp
+        src/AIPlayer.cpp
+        src/Input.cpp
     )
     add_executable(cpu_tests tests/test_cpu.cpp ${CORE_SOURCES})
     target_include_directories(cpu_tests PRIVATE include)
     add_executable(hw_tests tests/test_hardware.cpp ${CORE_SOURCES})
     target_include_directories(hw_tests PRIVATE include)
+    add_executable(ai_tests tests/test_ai.cpp ${CORE_SOURCES})
+    target_include_directories(ai_tests PRIVATE include)
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(cpu_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
         target_compile_options(hw_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
+        target_compile_options(ai_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
     endif()
     add_test(NAME cpu_tests COMMAND cpu_tests)
     add_test(NAME hw_tests COMMAND hw_tests)
+    add_test(NAME ai_tests COMMAND ai_tests)
 endif()
