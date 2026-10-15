@@ -9,10 +9,12 @@ A Space Invaders arcade emulator written in C++17 with an SDL2 frontend. Emulate
   - IN0/IN1/IN2 inputs, shift-register / shift-offset / shift-data
   - OUT3 / OUT5 sound latches (edge-triggered + UFO loop)
   - RST 1 (mid-screen) / RST 2 (vblank) at 60 FPS
-- SDL2 renderer with 90° rotation handling (224×256, 3× scale)
+- SDL2 renderer with 90° rotation handling (224×256, 3× scale), classic green/red/white overlay (`--no-color` disables), reused frame buffer, vsync + high-resolution frame pacing
 - SDL_mixer sound (accepts MAME-style `0.wav`-`8.wav` or descriptive names)
-- 8080 disassembler (`src/Disassembler8080.cpp`)
+- 8080 disassembler (`src/Disassembler8080.cpp`, `include/Disassembler8080.h`): `disassemble8080_str()` API plus `--dis <rom>` and `--test --trace` modes
 - CP/M diagnostic runner for `CPUTEST.COM`, `TST8080.COM`, `8080PRE.COM`
+- Unit tests (`ctest`): `cpu_tests` (flags, DAA/ANA/DCR edge cases, stack wrap) and `hw_tests` (shift register, sound latches, ports, disassembler)
+- Frontend: gamepad input, pause, save/load state (`F5`/`F9` → `save.bin`), ROM size + CRC32 logging, graceful error latch instead of `exit()`
 
 ## Requirements
 
@@ -32,6 +34,7 @@ sudo apt install cmake libsdl2-dev libsdl2-mixer-dev
 ```bash
 cmake -B build
 cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 Binary: `build/space_invaders`
@@ -41,9 +44,10 @@ Binary: `build/space_invaders`
 From the project root (so `roms/` and `assets/` resolve):
 
 ```bash
-./build/space_invaders
+./build/space_invaders [--no-color]
 ./build/space_invaders --help
-./build/space_invaders --test roms/CPUTEST.COM
+./build/space_invaders --test roms/CPUTEST.COM [--trace]
+./build/space_invaders --dis roms/invaders.h 0 64
 ```
 
 ## Controls
@@ -58,7 +62,11 @@ From the project root (so `roms/` and `assets/` resolve):
 | `A` / `D` | P2 left / right |
 | `W` | P2 fire |
 | `T` | Tilt |
+| `P` | Pause / resume |
+| `F5` / `F9` | Save / load state (`save.bin`) |
 | `Esc` | Quit |
+
+Gamepad: DPad = P1 move, A/B/X = P1 fire, Start = P1 start, Back = coin.
 
 DIP defaults: 3 ships, extra ship at 1500, coin info ON in demo.
 
@@ -67,15 +75,24 @@ DIP defaults: 3 ships, extra ship at 1500, coin info ON in demo.
 ```text
 CMakeLists.txt
 include/
-  State8080.h        # CPU + hardware state
-  Emulator8080.h     # emulate8080 / emulate_interrupt
+  State8080.h        # CPU + hardware state (array memory, bool flags)
+  Emulator8080.h     # emulate8080 / emulate_interrupt (0 = error latch)
   ArcadeHardware.h   # arcade I/O abstraction
+  Disassembler8080.h # disassemble8080_str() API
+  Renderer.h         # screen constants + render_vram()
+  Audio.h            # SDL_mixer frontend
+  Input.h            # keyboard + gamepad, port masks
 src/
-  main.cpp           # SDL frontend, ROM/sound loading, main loop, --test mode
-  Emulator8080.cpp   # 8080 instruction set
+  main.cpp           # SDL frontend, ROM loading, main loop, --test/--dis modes
+  Emulator8080.cpp   # 8080 instruction set (wrapped fetches)
   ArcadeHardware.cpp # ports 0-6, shift register, sound latches
-  Renderer.cpp       # VRAM (0x2400) -> SDL texture
+  Renderer.cpp       # VRAM (0x2400) -> SDL texture (overlay colors)
   Disassembler8080.cpp
+  Audio.cpp          # sound slots, edge-triggered playback
+  Input.cpp          # key/button -> port bits
+tests/
+  test_cpu.cpp       # cpu_tests: flags, ALU, jumps, stack/fetch wrap
+  test_hardware.cpp  # hw_tests: shift reg, sound, ports, disassembler
 roms/
   invaders.e/f/g/h   # game ROMs, loaded at 0x0000/0x0800/0x1000/0x1800
   CPUTEST.COM / TST8080.COM / 8080PRE.COM  # CPU diagnostics (loaded at 0x100)
@@ -93,7 +110,8 @@ Sound samples in `assets/` are third-party / recorded effects. See `LICENSE.md` 
 ## Timing Model
 
 - 2 MHz / 60 FPS = 33333 cycles/frame, split in halves around RST 1 / RST 2
-- Halted CPU burns cycles until next interrupt (matches hardware)
+- Halted CPU yields its budget until next interrupt (matches hardware); emulation errors stop the frame loop
+- Frame pacing: `SDL_RENDERER_PRESENTVSYNC` + `SDL_GetPerformanceCounter` deadline with anti-spiral reset (replaces plain `SDL_Delay`)
 
 ## License
 
