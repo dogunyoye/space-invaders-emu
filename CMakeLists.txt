@@ -42,3 +42,23 @@ endif()
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(space_invaders PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()
+
+option(BUILD_TESTS "Build unit tests" ON)
+if (BUILD_TESTS)
+    enable_testing()
+    set(CORE_SOURCES
+        src/Emulator8080.cpp
+        src/ArcadeHardware.cpp
+        src/Disassembler8080.cpp
+    )
+    add_executable(cpu_tests tests/test_cpu.cpp ${CORE_SOURCES})
+    target_include_directories(cpu_tests PRIVATE include)
+    add_executable(hw_tests tests/test_hardware.cpp ${CORE_SOURCES})
+    target_include_directories(hw_tests PRIVATE include)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(cpu_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
+        target_compile_options(hw_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    endif()
+    add_test(NAME cpu_tests COMMAND cpu_tests)
+    add_test(NAME hw_tests COMMAND hw_tests)
+endif()
