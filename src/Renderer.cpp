@@ -1,21 +1,27 @@
 #include <SDL2/SDL.h>
-#include <iostream>
+#include <cstdint>
 #include <vector>
+#include "Renderer.h"
 #include "State8080.h"
 
-// Window dimensions (portrait mode rotated to landscape or rendered natively)
-const int SCREEN_WIDTH = 224;
-const int SCREEN_HEIGHT = 256;
-const int SCALE = 3; // Scale up window size for visibility
+// Classic overlay approximation (screen 224x256, y=0 top):
+//   bottom player/bunker band -> green, saucer lane -> red, else white.
+static uint32_t overlay_color(int screen_y) {
+    if (screen_y >= 192) return 0xFF00FF00;      // green (ABGR)
+    if (screen_y >= 64 && screen_y < 96) return 0xFF0000FF;  // red (ABGR)
+    return 0xFFFFFFFF;  // white
+}
 
-void render_vram(SDL_Renderer *renderer, SDL_Texture *texture, const State8080 &state) {
+void render_vram(SDL_Renderer *renderer, SDL_Texture *texture, const State8080 &state,
+                 bool color) {
     if (!renderer || !texture) return;
     if (state.memory.size() < 0x4000) return;
-    // Pixel buffer for RGBA (224 * 256 * 4 bytes)
-    std::vector<uint32_t> pixels(SCREEN_WIDTH * SCREEN_HEIGHT, 0);
+
+    // Reused across frames: no per-frame allocation.
+    static std::vector<uint32_t> pixels(SCREEN_WIDTH * SCREEN_HEIGHT, 0);
 
     // VRAM starts at 0x2400
-    const uint8_t *vram = &state.memory[0x2400];
+    const uint8_t *vram = state.memory.data() + 0x2400;
 
     for (int i = 0; i < 7168; ++i) {
         uint8_t byte = vram[i];
@@ -36,20 +42,22 @@ void render_vram(SDL_Renderer *renderer, SDL_Texture *texture, const State8080 &
             int screen_y = 255 - (y_base + bit);
 
             if (screen_x >= 0 && screen_x < SCREEN_WIDTH && screen_y >= 0 && screen_y < SCREEN_HEIGHT) {
-                // Color mapping: Classic arcade white/green lines, or simple white-on-black
-                uint32_t color = on ? 0xFFFFFFFF : 0xFF000000; // White on Black
-                
-                // Optional: Add color overlays if you want authentic arcade colors 
-                // (e.g., green filter for the bunker/score area, red for top invasion line)
-
-                pixels[screen_y * SCREEN_WIDTH + screen_x] = color;
+                uint32_t pixel;
+                if (!on) {
+                    pixel = 0xFF000000;  // black
+                } else if (color) {
+                    pixel = overlay_color(screen_y);
+                } else {
+                    pixel = 0xFFFFFFFF;  // white
+                }
+                pixels[(size_t)screen_y * SCREEN_WIDTH + screen_x] = pixel;
             }
         }
     }
 
     // Update SDL texture with pixel buffer
-    SDL_UpdateTexture(texture, NULL, pixels.data(), SCREEN_WIDTH * sizeof(uint32_t));
+    SDL_UpdateTexture(texture, nullptr, pixels.data(), SCREEN_WIDTH * sizeof(uint32_t));
     SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, texture, NULL, NULL);
+    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
     SDL_RenderPresent(renderer);
 }

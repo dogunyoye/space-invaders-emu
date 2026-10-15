@@ -12,20 +12,10 @@
 #include "ArcadeHardware.h"
 #include "Disassembler8080.h"
 #include "Emulator8080.h"
+#include "Renderer.h"
 #include "State8080.h"
 
-// Forward declaration (implemented in Renderer.cpp)
-void render_vram(SDL_Renderer *renderer, SDL_Texture *texture, const State8080 &state);
-// Forward declaration (implemented in Emulator8080.cpp)
-void emulate_interrupt(State8080 *state, int interrupt_num);
-//Forward declaration (implemented in Emulator8080.cpp)
-int emulate8080(State8080 *state);
-
 namespace {
-
-const int SCREEN_WIDTH = 224;
-const int SCREEN_HEIGHT = 256;
-const int SCALE = 3;
 
 // 2 MHz / 60 FPS. Split into two halves around the mid-screen / vblank IRQs.
 const int CYCLES_PER_FRAME = 33333;
@@ -403,7 +393,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    SDL_Renderer *renderer =
+        SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) {
         std::cerr << "Renderer creation failed (" << SDL_GetError() << "), trying software."
                   << std::endl;
@@ -449,12 +440,12 @@ int main(int argc, char *argv[]) {
     bool quit = false;
     SDL_Event e;
 
-    const int TARGET_FPS = 60;
-    const Uint32 FRAME_TIME_MS = 1000 / TARGET_FPS;
+    const double TARGET_FPS = 60.0;
+    const Uint64 freq = SDL_GetPerformanceFrequency();
+    const Uint64 frame_ticks = (Uint64)(freq / TARGET_FPS);
+    Uint64 next_frame = SDL_GetPerformanceCounter();
 
     while (!quit) {
-        Uint32 frame_start = SDL_GetTicks();
-
         while (SDL_PollEvent(&e) != 0) {
             if (e.type == SDL_QUIT) {
                 quit = true;
@@ -477,8 +468,21 @@ int main(int argc, char *argv[]) {
         poll_arcade_sounds();
         render_vram(renderer, texture, state);
 
-        Uint32 frame_time = SDL_GetTicks() - frame_start;
-        if (frame_time < FRAME_TIME_MS) SDL_Delay(FRAME_TIME_MS - frame_time);
+        next_frame += frame_ticks;
+        Uint64 now = SDL_GetPerformanceCounter();
+        if (next_frame > now) {
+            Uint32 wait_ms = (Uint32)((next_frame - now) * 1000 / freq);
+            if (wait_ms > 0) SDL_Delay(wait_ms);
+        } else {
+            // Running behind (vsync off / slow frame): reset deadline to avoid spiral.
+            next_frame = now;
+        }
+        if (state.emulation_error) {
+            std::cerr << "Emulation error: opcode 0x" << std::hex
+                      << (int)state.error_opcode << " at 0x" << state.error_pc
+                      << std::dec << " — stopping." << std::endl;
+            break;
+        }
     }
 
     shutdown_audio();
