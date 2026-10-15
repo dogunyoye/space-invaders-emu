@@ -2,7 +2,8 @@
 #include "State8080.h"
 
 // Execute a single 8080 instruction at state->pc.
-// Returns the number of cycles consumed.
+// Returns the number of cycles consumed, or 0 on unimplemented opcode
+// (sets state->emulation_error, state->error_opcode/pc and halts).
 int emulate8080(State8080 *state);
 
 // Generate an 8080 RST interrupt (Space Invaders uses RST 1 and RST 2).

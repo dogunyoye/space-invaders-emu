@@ -2,7 +2,37 @@
 #include "Emulator8080.h"
 #include "ArcadeHardware.h"
 #include <iostream>
-#include <cstdlib>
+
+// ---------- Memory helpers (wrap at 64K, no OOB on 0xFFFF) ----------
+
+static inline uint8_t mem_read(const State8080 *state, uint16_t addr) {
+    return state->memory[addr];
+}
+
+static inline uint16_t mem_read16(const State8080 *state, uint16_t addr) {
+    uint8_t lo = state->memory[addr];
+    uint8_t hi = state->memory[(uint16_t)(addr + 1)];
+    return (uint16_t)((hi << 8) | lo);
+}
+
+static inline void mem_write(State8080 *state, uint16_t addr, uint8_t val) {
+    state->memory[addr] = val;
+}
+
+// Fetch single immediate byte at PC, advancing PC (wraps naturally).
+static inline uint8_t fetch_byte(State8080 *state) {
+    uint8_t v = state->memory[state->pc];
+    state->pc = (uint16_t)(state->pc + 1);
+    return v;
+}
+
+// Fetch little-endian 16-bit immediate, advancing PC by 2 (wraps at 64K).
+static inline uint16_t fetch_word(State8080 *state) {
+    uint8_t lo = state->memory[state->pc];
+    uint8_t hi = state->memory[(uint16_t)(state->pc + 1)];
+    state->pc = (uint16_t)(state->pc + 2);
+    return (uint16_t)((hi << 8) | lo);
+}
 
 // ---------- Flag helpers ----------
 
@@ -40,7 +70,7 @@ uint8_t get_reg_val(const State8080 &state, uint8_t code) {
         case 3: return state.e;
         case 4: return state.h;
         case 5: return state.l;
-        case 6: return state.memory[hl]; // Memory reference via HL
+        case 6: return mem_read(&state, hl); // Memory reference via HL
         case 7: return state.a;
         default: return 0;
     }
@@ -56,7 +86,7 @@ void set_reg_val(State8080 &state, uint8_t code, uint8_t val) {
         case 3: state.e = val; break;
         case 4: state.h = val; break;
         case 5: state.l = val; break;
-        case 6: state.memory[hl] = val; break; // Memory write via HL
+        case 6: mem_write(&state, hl, val); break; // Memory write via HL
         case 7: state.a = val; break;
     }
 }
@@ -191,15 +221,15 @@ static uint8_t dcr_value(State8080 &state, uint8_t val) {
 // ---------- Stack helpers ----------
 
 static void push_word(State8080 *state, uint8_t high, uint8_t low) {
-    state->memory[state->sp - 1] = high;
-    state->memory[state->sp - 2] = low;
-    state->sp -= 2;
+    state->memory[(uint16_t)(state->sp - 1)] = high;
+    state->memory[(uint16_t)(state->sp - 2)] = low;
+    state->sp = (uint16_t)(state->sp - 2);
 }
 
 static void pop_word(State8080 *state, uint8_t &high, uint8_t &low) {
     low = state->memory[state->sp];
-    high = state->memory[state->sp + 1];
-    state->sp += 2;
+    high = state->memory[(uint16_t)(state->sp + 1)];
+    state->sp = (uint16_t)(state->sp + 2);
 }
 
 static uint8_t flags_to_psw(const State8080 &state) {
@@ -360,8 +390,7 @@ int emulate8080(State8080 *state) {
     // Handle MVI pattern: 00DDD110 (covers 0x06,0x0E,0x16,0x1E,0x26,0x2E,0x36,0x3E)
     if ((opcode & 0xC7) == 0x06) {
         uint8_t reg = (opcode >> 3) & 7;
-        uint8_t val = state->memory[state->pc];
-        state->pc++;
+        uint8_t val = fetch_byte(state);
         set_reg_val(*state, reg, val);
         return (reg == 6) ? 10 : 7;
     }
@@ -383,57 +412,59 @@ int emulate8080(State8080 *state) {
             cycles = 4;
             break;
 
-        case 0x01: // LXI B, d16
-            state->c = state->memory[state->pc];
-            state->b = state->memory[state->pc + 1];
-            state->pc += 2;
+        case 0x01: { // LXI B, d16
+            uint16_t w = fetch_word(state);
+            state->c = w & 0xFF;
+            state->b = (w >> 8) & 0xFF;
             cycles = 10;
             break;
+        }
 
-        case 0x11: // LXI D, d16
-            state->e = state->memory[state->pc];
-            state->d = state->memory[state->pc + 1];
-            state->pc += 2;
+        case 0x11: { // LXI D, d16
+            uint16_t w = fetch_word(state);
+            state->e = w & 0xFF;
+            state->d = (w >> 8) & 0xFF;
             cycles = 10;
             break;
+        }
 
-        case 0x21: // LXI H, d16
-            state->l = state->memory[state->pc];
-            state->h = state->memory[state->pc + 1];
-            state->pc += 2;
+        case 0x21: { // LXI H, d16
+            uint16_t w = fetch_word(state);
+            state->l = w & 0xFF;
+            state->h = (w >> 8) & 0xFF;
             cycles = 10;
             break;
+        }
 
         case 0x31: // LXI SP, d16
-            state->sp = (state->memory[state->pc + 1] << 8) | state->memory[state->pc];
-            state->pc += 2;
+            state->sp = fetch_word(state);
             cycles = 10;
             break;
 
         case 0x02: { // STAX B
             uint16_t addr = get_BC(*state);
-            state->memory[addr] = state->a;
+            mem_write(state, addr, state->a);
             cycles = 7;
             break;
         }
 
         case 0x12: { // STAX D
             uint16_t addr = get_DE(*state);
-            state->memory[addr] = state->a;
+            mem_write(state, addr, state->a);
             cycles = 7;
             break;
         }
 
         case 0x0A: { // LDAX B
             uint16_t addr = get_BC(*state);
-            state->a = state->memory[addr];
+            state->a = mem_read(state, addr);
             cycles = 7;
             break;
         }
 
         case 0x1A: { // LDAX D
             uint16_t addr = get_DE(*state);
-            state->a = state->memory[addr];
+            state->a = mem_read(state, addr);
             cycles = 7;
             break;
         }
@@ -561,35 +592,31 @@ int emulate8080(State8080 *state) {
         }
 
         case 0x22: { // SHLD adr
-            uint16_t addr = state->memory[state->pc] | (state->memory[state->pc + 1] << 8);
-            state->pc += 2;
-            state->memory[addr] = state->l;
-            state->memory[addr + 1] = state->h;
+            uint16_t addr = fetch_word(state);
+            mem_write(state, addr, state->l);
+            mem_write(state, (uint16_t)(addr + 1), state->h);
             cycles = 16;
             break;
         }
 
         case 0x2A: { // LHLD adr
-            uint16_t addr = state->memory[state->pc] | (state->memory[state->pc + 1] << 8);
-            state->pc += 2;
-            state->l = state->memory[addr];
-            state->h = state->memory[addr + 1];
+            uint16_t addr = fetch_word(state);
+            state->l = mem_read(state, addr);
+            state->h = mem_read(state, (uint16_t)(addr + 1));
             cycles = 16;
             break;
         }
 
         case 0x32: { // STA adr
-            uint16_t addr = state->memory[state->pc] | (state->memory[state->pc + 1] << 8);
-            state->pc += 2;
-            state->memory[addr] = state->a;
+            uint16_t addr = fetch_word(state);
+            mem_write(state, addr, state->a);
             cycles = 13;
             break;
         }
 
         case 0x3A: { // LDA adr
-            uint16_t addr = state->memory[state->pc] | (state->memory[state->pc + 1] << 8);
-            state->pc += 2;
-            state->a = state->memory[addr];
+            uint16_t addr = fetch_word(state);
+            state->a = mem_read(state, addr);
             cycles = 13;
             break;
         }
@@ -639,55 +666,47 @@ int emulate8080(State8080 *state) {
             break;
 
         case 0xC6: // ADI d8
-            add_to_accumulator(*state, state->memory[state->pc]);
-            state->pc++;
+            add_to_accumulator(*state, fetch_byte(state));
             cycles = 7;
             break;
 
         case 0xCE: // ACI d8
-            add_with_carry_to_accumulator(*state, state->memory[state->pc]);
-            state->pc++;
+            add_with_carry_to_accumulator(*state, fetch_byte(state));
             cycles = 7;
             break;
 
         case 0xD6: // SUI d8
-            subtract_from_accumulator(*state, state->memory[state->pc]);
-            state->pc++;
+            subtract_from_accumulator(*state, fetch_byte(state));
             cycles = 7;
             break;
 
         case 0xDE: // SBI d8
-            subtract_with_borrow_from_accumulator(*state, state->memory[state->pc]);
-            state->pc++;
+            subtract_with_borrow_from_accumulator(*state, fetch_byte(state));
             cycles = 7;
             break;
 
         case 0xE6: // ANI d8
-            ana_accumulator(*state, state->memory[state->pc]);
-            state->pc++;
+            ana_accumulator(*state, fetch_byte(state));
             cycles = 7;
             break;
 
         case 0xEE: // XRI d8
-            xra_accumulator(*state, state->memory[state->pc]);
-            state->pc++;
+            xra_accumulator(*state, fetch_byte(state));
             cycles = 7;
             break;
 
         case 0xF6: // ORI d8
-            ora_accumulator(*state, state->memory[state->pc]);
-            state->pc++;
+            ora_accumulator(*state, fetch_byte(state));
             cycles = 7;
             break;
 
         case 0xFE: // CPI d8
-            cmp_accumulator(*state, state->memory[state->pc]);
-            state->pc++;
+            cmp_accumulator(*state, fetch_byte(state));
             cycles = 7;
             break;
 
         case 0xC3: // JMP adr
-            state->pc = (state->memory[state->pc + 1] << 8) | state->memory[state->pc];
+            state->pc = fetch_word(state);
             cycles = 10;
             break;
 
@@ -700,8 +719,7 @@ int emulate8080(State8080 *state) {
         case 0xF2: // JP adr
         case 0xFA: // JM adr
         {
-            uint16_t addr = state->memory[state->pc] | (state->memory[state->pc + 1] << 8);
-            state->pc += 2;
+            uint16_t addr = fetch_word(state);
             uint8_t ccc = (opcode >> 3) & 7;
             // Jcc mapping: JNZ=000, JZ=001, JNC=010, JC=011, JPO=100, JPE=101, JP=110, JM=111
             // (opcode>>3)&7 yields 0..7 in order for C2,CA,D2,DA,E2,EA,F2,FA. Verified.
@@ -712,8 +730,7 @@ int emulate8080(State8080 *state) {
         }
 
         case 0xCD: { // CALL adr
-            uint16_t addr = state->memory[state->pc] | (state->memory[state->pc + 1] << 8);
-            state->pc += 2;
+            uint16_t addr = fetch_word(state);
             push_word(state, (state->pc >> 8) & 0xFF, state->pc & 0xFF);
             state->pc = addr;
             cycles = 17;
@@ -729,8 +746,7 @@ int emulate8080(State8080 *state) {
         case 0xF4: // CP adr
         case 0xFC: // CM adr
         {
-            uint16_t addr = state->memory[state->pc] | (state->memory[state->pc + 1] << 8);
-            state->pc += 2;
+            uint16_t addr = fetch_word(state);
             uint8_t ccc = (opcode >> 3) & 7;
             if (check_condition(*state, ccc)) {
                 push_word(state, (state->pc >> 8) & 0xFF, state->pc & 0xFF);
@@ -845,10 +861,10 @@ int emulate8080(State8080 *state) {
 
         case 0xE3: { // XTHL
             uint8_t h = state->h, l = state->l;
-            state->l = state->memory[state->sp];
-            state->h = state->memory[state->sp + 1];
-            state->memory[state->sp] = l;
-            state->memory[state->sp + 1] = h;
+            state->l = mem_read(state, state->sp);
+            state->h = mem_read(state, (uint16_t)(state->sp + 1));
+            mem_write(state, state->sp, l);
+            mem_write(state, (uint16_t)(state->sp + 1), h);
             cycles = 18;
             break;
         }
@@ -884,8 +900,7 @@ int emulate8080(State8080 *state) {
             break;
 
         case 0xD3: { // OUT d8
-            uint8_t port = state->memory[state->pc];
-            state->pc++;
+            uint8_t port = fetch_byte(state);
 
             arcade_handle_out(*state, port, state->a);
 
@@ -894,8 +909,7 @@ int emulate8080(State8080 *state) {
         }
 
         case 0xDB: { // IN d8
-            uint8_t port = state->memory[state->pc];
-            state->pc++;
+            uint8_t port = fetch_byte(state);
 
             state->a = arcade_handle_in(*state, port);
 
@@ -906,7 +920,11 @@ int emulate8080(State8080 *state) {
         default:
             std::cerr << "Error: Unimplemented opcode 0x" << std::hex << (int)opcode
                       << " at PC = 0x" << (state->pc - 1) << std::dec << std::endl;
-            std::exit(1);
+            state->emulation_error = true;
+            state->error_opcode = opcode;
+            state->error_pc = (uint16_t)(state->pc - 1);
+            state->halted = 1;
+            return 0;
     }
 
     return cycles;

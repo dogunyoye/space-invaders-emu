@@ -250,15 +250,18 @@ void handle_key(State8080 &state, SDL_Keycode sym, bool pressed) {
 
 // Run all pending cycles up to a budget. A halted CPU just burns cycles
 // until the next interrupt (which clears `halted`).
+// Stops early on emulation errors (emulate8080 returns <= 0).
 void run_cycles(State8080 &state, int budget) {
     int done = 0;
     while (done < budget) {
-        if (state.halted) {
-            done = budget;  // idle until interrupt
-            break;
-        }
-        done += emulate8080(&state);
+        if (state.halted || state.emulation_error) break;
+        int cycles = emulate8080(&state);
+        if (cycles <= 0) break;
+        done += cycles;
     }
+    if (done >= budget) return;
+    // If halted without error, consume the rest as idle time.
+    // (No-op: keeps timing model explicit.)
 }
 
 int run_diagnostic(const std::string &rom_path, bool trace) {
@@ -292,8 +295,8 @@ int run_diagnostic(const std::string &rom_path, bool trace) {
                 std::cout << (char)state.e << std::flush;
             }
             uint8_t low = state.memory[state.sp];
-            uint8_t high = state.memory[state.sp + 1];
-            state.sp += 2;
+            uint8_t high = state.memory[(uint16_t)(state.sp + 1)];
+            state.sp = (uint16_t)(state.sp + 2);
             state.pc = (uint16_t)((high << 8) | low);
         }
 
@@ -303,6 +306,13 @@ int run_diagnostic(const std::string &rom_path, bool trace) {
         }
         emulate8080(&state);
         total_instructions++;
+
+        if (state.emulation_error) {
+            std::cerr << "\n[Emulation error: opcode 0x" << std::hex
+                      << (int)state.error_opcode << " at 0x" << state.error_pc
+                      << std::dec << "]" << std::endl;
+            break;
+        }
 
         if (state.pc == 0x0000) {
             std::cout << "\n[Test Completed / Program Exited via 0x0000]" << std::endl;

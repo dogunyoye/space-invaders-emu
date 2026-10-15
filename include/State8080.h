@@ -25,6 +25,12 @@ struct State8080 {
     uint8_t int_enable;
     uint8_t halted;
 
+    // Error latch: set when emulate8080 hits an unimplemented opcode.
+    // emulate8080 returns 0 in that case (no exit()).
+    bool emulation_error = false;
+    uint8_t error_opcode = 0;
+    uint16_t error_pc = 0;
+
     // --- Space Invaders Hardware / I/O State ---
     uint8_t port1 = 0;
     uint8_t port2 = 0;
