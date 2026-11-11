@@ -8,7 +8,7 @@
 //   bottom player/bunker band -> green, saucer lane -> red, else white.
 static uint32_t overlay_color(int screen_y) {
     if (screen_y >= 192) return 0xFF00FF00;      // green (ABGR)
-    if (screen_y >= 64 && screen_y < 96) return 0xFF0000FF;  // red (ABGR)
+    if (screen_y >= 32 && screen_y < 64) return 0xFF0000FF;  // red (ABGR), UFO at 41-47
     return 0xFFFFFFFF;  // white
 }
 

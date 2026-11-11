@@ -53,7 +53,8 @@ void arcade_handle_out(State8080 &state, uint8_t port, uint8_t value) {
             state.shift_offset = (uint8_t)(value & 0x07);
             break;
         case 3:
-            s_out3_prev = s_out3;
+            // Only arcade_ack_sound() advances *_prev: the ROM rewrites the
+            // latch several times per frame, so edges are measured per poll.
             s_out3 = value;
             break;
         case 4:
@@ -63,7 +64,6 @@ void arcade_handle_out(State8080 &state, uint8_t port, uint8_t value) {
                 (uint16_t)((state.shift_register >> 8) | ((uint16_t)value << 8));
             break;
         case 5:
-            s_out5_prev = s_out5;
             s_out5 = value;
             break;
         case 6:

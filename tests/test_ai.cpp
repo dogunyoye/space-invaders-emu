@@ -25,7 +25,7 @@ static void test_pixel_roundtrip() {
 
 static void test_cannon_detect() {
     State8080 s;
-    draw_block(s, 44, 56, 225, 232);  // 13-wide cannon
+    draw_block(s, 44, 56, 216, 223);  // 13-wide cannon
     CHECK(ai_find_cannon(s, 112) == 50);
     // Ground line alone (1px tall, full width) must not count as a cannon.
     State8080 g;
@@ -33,9 +33,30 @@ static void test_cannon_detect() {
     CHECK(ai_find_cannon(g, 112) < 0);
 }
 
+static void test_cannon_ignores_lives_icons() {
+    // Real layout: cannon rows 216-223, lives icons rows 240-247 directly
+    // below it. The icons must not merge with or shift the cannon centre.
+    State8080 s;
+    draw_block(s, 39, 51, 216, 223);  // cannon at x=45
+    draw_block(s, 26, 38, 240, 247);  // lives icon
+    draw_block(s, 42, 54, 240, 247);  // lives icon
+    CHECK(ai_find_cannon(s, 112) == 45);
+}
+
+static void test_target_saucer_vs_invaders() {
+    // Top invader row (rows 64-71) must not be mistaken for the UFO.
+    State8080 s;
+    draw_block(s, 20, 31, 64, 71);     // top-row invader
+    draw_block(s, 96, 104, 128, 135);  // lowest invader row, x=100
+    CHECK(ai_find_target(s) == 100);
+    // UFO at its real lane (rows 41-47) takes priority.
+    draw_block(s, 150, 165, 41, 47);
+    CHECK(ai_find_target(s) == 157);
+}
+
 static void test_chase_right() {
     State8080 s;
-    draw_block(s, 44, 56, 225, 232);    // cannon at x=50
+    draw_block(s, 44, 56, 216, 223);    // cannon at x=50
     draw_block(s, 96, 104, 170, 176);  // invader row low, centered x=100
     AIPlayer2 ai;
     ai.setEnabled(true);
@@ -46,7 +67,7 @@ static void test_chase_right() {
 
 static void test_chase_left() {
     State8080 s;
-    draw_block(s, 144, 156, 225, 232);  // cannon at x=150
+    draw_block(s, 144, 156, 216, 223);  // cannon at x=150
     draw_block(s, 96, 104, 170, 176);   // invader at x=100
     AIPlayer2 ai;
     ai.setEnabled(true);
@@ -57,7 +78,7 @@ static void test_chase_left() {
 
 static void test_fire_when_aligned() {
     State8080 s;
-    draw_block(s, 94, 106, 225, 232);   // cannon at x=100
+    draw_block(s, 94, 106, 216, 223);   // cannon at x=100
     draw_block(s, 96, 104, 170, 176);   // invader at x=100
     AIPlayer2 ai;
     ai.setEnabled(true);
@@ -74,7 +95,7 @@ static void test_fire_when_aligned() {
 
 static void test_dodge() {
     State8080 s;
-    draw_block(s, 94, 106, 225, 232);  // cannon at x=100
+    draw_block(s, 94, 106, 216, 223);  // cannon at x=100
     draw_block(s, 96, 104, 120, 126);  // invader far above (target aligned)
     draw_block(s, 88, 90, 180, 190);   // enemy bullet left of cannon, close
     int dir = ai_dodge_dir(s, 100, 100);
@@ -98,7 +119,7 @@ static void test_no_cannon_releases_keys() {
 
 static void test_disabled_noop() {
     State8080 s;
-    draw_block(s, 44, 56, 225, 232);
+    draw_block(s, 44, 56, 216, 223);
     draw_block(s, 96, 104, 170, 176);
     AIPlayer2 ai;  // disabled by default
     ai.update(s);
@@ -108,6 +129,8 @@ static void test_disabled_noop() {
 int main() {
     test_pixel_roundtrip();
     test_cannon_detect();
+    test_cannon_ignores_lives_icons();
+    test_target_saucer_vs_invaders();
     test_chase_right();
     test_chase_left();
     test_fire_when_aligned();

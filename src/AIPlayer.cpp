@@ -9,15 +9,15 @@
 namespace {
 
 // --- Tunables (screen coords, y=0 top) ---
-constexpr int kPlayerTop = 218;
-constexpr int kPlayerBottom = 248;
-constexpr int kPlayerMinHeight = 4;  // filters the 1px ground line
+constexpr int kPlayerTop = 212;     // cannon occupies rows 216-223
+constexpr int kPlayerBottom = 228;  // stop above ground line + lives icons (239+)
+constexpr int kPlayerMinHeight = 4;
 constexpr int kCannonMinWidth = 8;
 
-constexpr int kInvaderTop = 24;
+constexpr int kInvaderTop = 52;  // below the saucer lane and score text
 constexpr int kInvaderBottom = 180;
-constexpr int kSaucerTop = 56;
-constexpr int kSaucerBottom = 96;
+constexpr int kSaucerTop = 36;  // UFO is drawn at rows 41-47
+constexpr int kSaucerBottom = 50;
 
 constexpr int kDodgeTop = 140;
 constexpr int kDodgeBottom = 205;

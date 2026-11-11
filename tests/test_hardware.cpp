@@ -40,6 +40,25 @@ static void test_sound_latch() {
     CHECK(arcade_last_out5() == 0x10);
 }
 
+static void test_sound_edge_survives_rewrite() {
+    // The ROM rewrites the latch several times per frame; a 0->1 edge must
+    // still be visible at poll time if the same value is written twice.
+    State8080 s;
+    arcade_sound_reset();
+    arcade_handle_out(s, 3, 0x02);
+    arcade_handle_out(s, 3, 0x02);
+    uint8_t edge3 = (uint8_t)((arcade_last_out3() ^ arcade_last_out3_prev()) & arcade_last_out3());
+    CHECK(edge3 & 0x02);
+    arcade_handle_out(s, 5, 0x01);
+    arcade_handle_out(s, 5, 0x01);
+    uint8_t edge5 = (uint8_t)((arcade_last_out5() ^ arcade_last_out5_prev()) & arcade_last_out5());
+    CHECK(edge5 & 0x01);
+    arcade_ack_sound();
+    arcade_handle_out(s, 3, 0x02);
+    edge3 = (uint8_t)((arcade_last_out3() ^ arcade_last_out3_prev()) & arcade_last_out3());
+    CHECK(edge3 == 0);  // held level after ack is not a new edge
+}
+
 static void test_ports() {
     State8080 s;
     s.port1 = 0x01;  // coin
@@ -68,6 +87,7 @@ static void test_disassembler() {
 int main() {
     test_shift_register();
     test_sound_latch();
+    test_sound_edge_survives_rewrite();
     test_ports();
     test_disassembler();
     std::printf("hw: %d checks, %d failures\n", checks, failures);
