@@ -4,32 +4,30 @@
 #include <iostream>
 
 // ---------- Memory helpers (wrap at 64K, no OOB on 0xFFFF) ----------
+// All CPU memory traffic goes through these so addr_mask (mirroring) and
+// rom_end (write protection) apply uniformly.
 
 static inline uint8_t mem_read(const State8080 *state, uint16_t addr) {
-    return state->memory[addr];
-}
-
-static inline uint16_t mem_read16(const State8080 *state, uint16_t addr) {
-    uint8_t lo = state->memory[addr];
-    uint8_t hi = state->memory[(uint16_t)(addr + 1)];
-    return (uint16_t)((hi << 8) | lo);
+    return state->memory[addr & state->addr_mask];
 }
 
 static inline void mem_write(State8080 *state, uint16_t addr, uint8_t val) {
+    addr &= state->addr_mask;
+    if (addr < state->rom_end) return;  // ROM: writes are dropped
     state->memory[addr] = val;
 }
 
 // Fetch single immediate byte at PC, advancing PC (wraps naturally).
 static inline uint8_t fetch_byte(State8080 *state) {
-    uint8_t v = state->memory[state->pc];
+    uint8_t v = mem_read(state, state->pc);
     state->pc = (uint16_t)(state->pc + 1);
     return v;
 }
 
 // Fetch little-endian 16-bit immediate, advancing PC by 2 (wraps at 64K).
 static inline uint16_t fetch_word(State8080 *state) {
-    uint8_t lo = state->memory[state->pc];
-    uint8_t hi = state->memory[(uint16_t)(state->pc + 1)];
+    uint8_t lo = mem_read(state, state->pc);
+    uint8_t hi = mem_read(state, (uint16_t)(state->pc + 1));
     state->pc = (uint16_t)(state->pc + 2);
     return (uint16_t)((hi << 8) | lo);
 }
@@ -44,24 +42,14 @@ static uint8_t parity_even(uint8_t v) {
     return (~v) & 1;
 }
 
-void set_zsp_flags(State8080 &state, uint8_t value) {
+static void set_zsp_flags(State8080 &state, uint8_t value) {
     state.cc.z = (value == 0);
     state.cc.s = ((value & 0x80) != 0);
     state.cc.p = parity_even(value);
 }
 
-// Provided for compatibility with the forward declaration (unused elsewhere)
-uint8_t add_bytes(State8080 &state, uint8_t a, uint8_t b, uint8_t carry) {
-    uint16_t result = (uint16_t)a + (uint16_t)b + (uint16_t)carry;
-    state.cc.cy = (result > 0xFF);
-    state.cc.ac = (((a & 0x0F) + (b & 0x0F) + carry) > 0x0F);
-    uint8_t truncated = (uint8_t)result;
-    set_zsp_flags(state, truncated);
-    return truncated;
-}
-
 // Helper to get value from a register code (0=B, 1=C, 2=D, 3=E, 4=H, 5=L, 6=M(hl), 7=A)
-uint8_t get_reg_val(const State8080 &state, uint8_t code) {
+static uint8_t get_reg_val(const State8080 &state, uint8_t code) {
     uint16_t hl = (state.h << 8) | state.l;
     switch (code) {
         case 0: return state.b;
@@ -77,7 +65,7 @@ uint8_t get_reg_val(const State8080 &state, uint8_t code) {
 }
 
 // Helper to set value into a register code
-void set_reg_val(State8080 &state, uint8_t code, uint8_t val) {
+static void set_reg_val(State8080 &state, uint8_t code, uint8_t val) {
     uint16_t hl = (state.h << 8) | state.l;
     switch (code) {
         case 0: state.b = val; break;
@@ -92,7 +80,7 @@ void set_reg_val(State8080 &state, uint8_t code, uint8_t val) {
 }
 
 // Helper for addition that updates all flags (Z, S, P, CY, AC)
-uint8_t add_to_accumulator(State8080 &state, uint8_t val) {
+static uint8_t add_to_accumulator(State8080 &state, uint8_t val) {
     uint16_t result = (uint16_t)state.a + (uint16_t)val;
 
     // Carry flag: set if result exceeds 255 (bit 8 is set)
@@ -109,7 +97,7 @@ uint8_t add_to_accumulator(State8080 &state, uint8_t val) {
 }
 
 // Helper for addition with carry that updates all flags (Z, S, P, CY, AC)
-uint8_t add_with_carry_to_accumulator(State8080 &state, uint8_t val) {
+static uint8_t add_with_carry_to_accumulator(State8080 &state, uint8_t val) {
     uint8_t old_cy = state.cc.cy;
     uint16_t result = (uint16_t)state.a + (uint16_t)val + (uint16_t)old_cy;
 
@@ -129,7 +117,7 @@ uint8_t add_with_carry_to_accumulator(State8080 &state, uint8_t val) {
 // Helper for subtraction that updates all flags (Z, S, P, CY, AC)
 // CY = borrow (1 if a < val). AC on 8080 = NOT half-borrow
 // (carry out of bit 3 of a + ~val + 1), i.e. 1 when low nibble does NOT borrow.
-uint8_t subtract_from_accumulator(State8080 &state, uint8_t val) {
+static uint8_t subtract_from_accumulator(State8080 &state, uint8_t val) {
     // Carry flag acts as borrow: set if value to subtract is greater than accumulator
     state.cc.cy = (state.a < val);
 
@@ -145,7 +133,7 @@ uint8_t subtract_from_accumulator(State8080 &state, uint8_t val) {
 }
 
 // Helper for subtraction with borrow that updates all flags (Z, S, P, CY, AC)
-uint8_t subtract_with_borrow_from_accumulator(State8080 &state, uint8_t val) {
+static uint8_t subtract_with_borrow_from_accumulator(State8080 &state, uint8_t val) {
     uint8_t old_cy = state.cc.cy;
     uint16_t subtrahend = (uint16_t)val + (uint16_t)old_cy;
     state.cc.cy = ((uint16_t)state.a < subtrahend);
@@ -221,14 +209,14 @@ static uint8_t dcr_value(State8080 &state, uint8_t val) {
 // ---------- Stack helpers ----------
 
 static void push_word(State8080 *state, uint8_t high, uint8_t low) {
-    state->memory[(uint16_t)(state->sp - 1)] = high;
-    state->memory[(uint16_t)(state->sp - 2)] = low;
+    mem_write(state, (uint16_t)(state->sp - 1), high);
+    mem_write(state, (uint16_t)(state->sp - 2), low);
     state->sp = (uint16_t)(state->sp - 2);
 }
 
 static void pop_word(State8080 *state, uint8_t &high, uint8_t &low) {
-    low = state->memory[state->sp];
-    high = state->memory[(uint16_t)(state->sp + 1)];
+    low = mem_read(state, state->sp);
+    high = mem_read(state, (uint16_t)(state->sp + 1));
     state->sp = (uint16_t)(state->sp + 2);
 }
 
@@ -263,6 +251,10 @@ static bool check_condition(const State8080 &state, uint8_t ccc) {
 }
 
 void emulate_interrupt(State8080 *state, int interrupt_num) {
+    // The request lands just after an EI: on hardware the line is still
+    // asserted when EI takes effect, so finish that one instruction first
+    // rather than dropping the interrupt.
+    if (!state->int_enable && state->ei_pending && !state->halted) emulate8080(state);
     if (!state->int_enable) return;
 
     state->int_enable = 0; // Disable further interrupts until enabled via EI
@@ -278,9 +270,9 @@ void emulate_interrupt(State8080 *state, int interrupt_num) {
     state->pc = interrupt_num * 8;
 }
 
-int emulate8080(State8080 *state) {
+static int execute(State8080 *state) {
     // Fetch opcode
-    uint8_t opcode = state->memory[state->pc];
+    uint8_t opcode = mem_read(state, state->pc);
 
     // Advance PC past the opcode (instructions can advance PC further if they take arguments)
     state->pc++;
@@ -660,8 +652,9 @@ int emulate8080(State8080 *state) {
             break;
 
         case 0x76: // HLT
+            // PC already points past HLT, so an interrupt pushes the next
+            // instruction as its return address (real 8080 behaviour).
             state->halted = 1;
-            state->pc--; // stay on HLT so interrupt can resume (conventional)
             cycles = 7;
             break;
 
@@ -895,7 +888,7 @@ int emulate8080(State8080 *state) {
             break;
 
         case 0xFB: // EI
-            state->int_enable = 1;
+            state->ei_pending = true;  // applied by emulate8080 after the next instruction
             cycles = 4;
             break;
 
@@ -927,5 +920,19 @@ int emulate8080(State8080 *state) {
             return 0;
     }
 
+    return cycles;
+}
+
+int emulate8080(State8080 *state) {
+    // A halted CPU idles until emulate_interrupt clears `halted`.
+    if (state->halted) return state->emulation_error ? 0 : 4;
+
+    // EI enables interrupts only once the instruction after it completes,
+    // so the classic "EI; RET" ISR epilogue can't be re-entered before RET.
+    // A DI in that slot cancels the pending enable.
+    bool enable_now = state->ei_pending && mem_read(state, state->pc) != 0xF3;
+    state->ei_pending = false;
+    int cycles = execute(state);
+    if (enable_now) state->int_enable = 1;
     return cycles;
 }

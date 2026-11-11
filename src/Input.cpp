@@ -1,13 +1,6 @@
 #include "Input.h"
 #include "State8080.h"
 
-void set_port_bit(uint8_t &port, uint8_t mask, bool pressed) {
-    if (pressed)
-        port |= mask;
-    else
-        port &= (uint8_t)~mask;
-}
-
 void handle_key(State8080 &state, SDL_Keycode sym, bool pressed) {
     switch (sym) {
         case SDLK_c:  // coin

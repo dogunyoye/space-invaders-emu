@@ -87,12 +87,6 @@ static void test_dad_push_pop() {
     CHECK(s2.d == 0x12 && s2.e == 0x34);
     CHECK(s2.sp == 0xF000);
     // PSW roundtrip preserves flags
-    State8080 s3;
-    s3.sp = 0xF000; s3.a = 0xAB;
-    s3.cc.z = true; s3.cc.cy = true;
-    load(s3, 0, {0xF5, 0xF1});  // PUSH PSW, POP PSW
-    s3.a = 0x00; s3.cc.z = false; s3.cc.cy = false;
-    // reload: need fresh state for push values
     State8080 s4;
     s4.sp = 0xF000; s4.a = 0xAB;
     s4.cc.z = true; s4.cc.cy = true;
@@ -148,6 +142,78 @@ static void test_fetch_wrap() {
     CHECK(s.pc == 0x0002);
 }
 
+static void test_hlt_interrupt_returns_past_hlt() {
+    // Interrupt during HLT must push the address *after* HLT, so the ISR's
+    // RET resumes execution instead of halting again.
+    State8080 s;
+    s.sp = 0xF000;
+    s.int_enable = 1;
+    load(s, 0x100, {0x76, 0x00});  // HLT; NOP
+    load(s, 0x08, {0xC9});         // RST 1 handler: RET
+    s.pc = 0x100;
+    emulate8080(&s);
+    CHECK(s.halted == 1);
+    CHECK(emulate8080(&s) == 4);  // halted: idles, PC unchanged
+    CHECK(s.pc == 0x101);
+    emulate_interrupt(&s, 1);
+    CHECK(s.halted == 0 && s.pc == 0x08);
+    emulate8080(&s);  // RET
+    CHECK(s.pc == 0x101);
+    CHECK(s.halted == 0);
+}
+
+static void test_ei_delay() {
+    State8080 s;
+    s.sp = 0xF000;
+    load(s, 0, {0xFB, 0x00, 0x00});  // EI; NOP; NOP
+    emulate8080(&s);                  // EI
+    CHECK(s.int_enable == 0);         // not yet: one-instruction delay
+    emulate8080(&s);                  // NOP
+    CHECK(s.int_enable == 1);
+    // EI; DI leaves interrupts disabled.
+    State8080 s2;
+    load(s2, 0, {0xFB, 0xF3, 0x00});
+    emulate8080(&s2);
+    emulate8080(&s2);
+    emulate8080(&s2);
+    CHECK(s2.int_enable == 0);
+    // Interrupt arriving right after EI is delivered after the next
+    // instruction, not dropped.
+    State8080 s3;
+    s3.sp = 0xF000;
+    load(s3, 0, {0xFB, 0x00, 0x00});  // EI; NOP
+    emulate8080(&s3);
+    emulate_interrupt(&s3, 2);
+    CHECK(s3.pc == 0x10);
+    CHECK(s3.memory[0xEFFE] == 0x02 && s3.memory[0xEFFF] == 0x00);  // return past NOP
+}
+
+static void test_rom_protect_and_mirror() {
+    State8080 s;
+    s.addr_mask = 0x3FFF;
+    s.rom_end = 0x2000;
+    s.memory[0x1000] = 0xAA;
+    s.a = 0x55;
+    load(s, 0x2100, {0x32, 0x00, 0x10,   // STA 0x1000 (ROM: dropped)
+                     0x32, 0x00, 0x60,   // STA 0x6000 (mirror of 0x2000)
+                     0x3A, 0x00, 0x20}); // LDA 0x2000
+    s.pc = 0x2100;
+    emulate8080(&s);
+    CHECK(s.memory[0x1000] == 0xAA);
+    emulate8080(&s);
+    CHECK(s.memory[0x2000] == 0x55);
+    CHECK(s.memory[0x6000] == 0x00);  // backing store is the masked address
+    s.a = 0;
+    emulate8080(&s);
+    CHECK(s.a == 0x55);
+    // Stack pushes are protected/mirrored too.
+    s.sp = 0x6002;
+    s.b = 0x12; s.c = 0x34;
+    load(s, 0x2109, {0xC5});  // PUSH B
+    emulate8080(&s);
+    CHECK(s.memory[0x2001] == 0x12 && s.memory[0x2000] == 0x34);
+}
+
 int main() {
     test_mov_add_flags();
     test_ana_ac();
@@ -156,6 +222,9 @@ int main() {
     test_jmp_call_ret();
     test_stack_wrap();
     test_fetch_wrap();
+    test_hlt_interrupt_returns_past_hlt();
+    test_ei_delay();
+    test_rom_protect_and_mirror();
     std::printf("cpu: %d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

@@ -5,3 +5,4 @@
 bool init_audio();
 void shutdown_audio();
 void poll_arcade_sounds();
+void set_audio_paused(bool paused);  // pause/resume all channels (UFO loop)

@@ -24,6 +24,14 @@ struct State8080 {
     ConditionCodes cc{};
     uint8_t int_enable = 0;
     uint8_t halted = 0;
+    // EI takes effect after the following instruction (8080 behaviour).
+    bool ei_pending = false;
+
+    // Memory map. Defaults give flat 64K RAM (CP/M diagnostics). Space
+    // Invaders decodes 14 address bits (RAM mirrors above 0x4000) and has
+    // ROM at 0x0000-0x1FFF: set addr_mask = 0x3FFF, rom_end = 0x2000.
+    uint16_t addr_mask = 0xFFFF;
+    uint16_t rom_end = 0;  // CPU writes below this address are ignored
 
     // Error latch: set when emulate8080 hits an unimplemented opcode.
     // emulate8080 returns 0 in that case (no exit()).

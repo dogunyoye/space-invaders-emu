@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 
-#include "Input.h"
+#include "ArcadeHardware.h"
 #include "Renderer.h"  // SCREEN_WIDTH / SCREEN_HEIGHT
 
 namespace {

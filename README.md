@@ -12,9 +12,10 @@ A Space Invaders arcade emulator written in C++17 with an SDL2 frontend. Emulate
 - SDL2 renderer with 90° rotation handling (224×256, 3× scale), classic green/red/white overlay (`--no-color` disables), reused frame buffer, vsync + high-resolution frame pacing
 - SDL_mixer sound (accepts MAME-style `0.wav`-`8.wav` or descriptive names)
 - 8080 disassembler (`src/Disassembler8080.cpp`, `include/Disassembler8080.h`): `disassemble8080_str()` API plus `--dis <rom>` and `--test --trace` modes
-- CP/M diagnostic runner for `CPUTEST.COM`, `TST8080.COM`, `8080PRE.COM`
-- Unit tests (`ctest`): `cpu_tests` (flags, DAA/ANA/DCR edge cases, stack wrap), `hw_tests` (shift register, sound latches, ports, disassembler), and `ai_tests` (VRAM vision, chase/dodge/fire, key release)
-- Frontend: gamepad input, pause, save/load state (`F5`/`F9` → `save.bin`), ROM size + CRC32 logging, graceful error latch instead of `exit()`
+- CP/M diagnostic runner (`--test`) for 8080 test binaries; `roms/CPUTEST.COM` is bundled, others such as `TST8080.COM` / `8080PRE.COM` can be supplied
+- Arcade memory map: ROM (0x0000-0x1FFF) write-protected, RAM mirrored above 0x4000
+- Unit tests (`ctest`): `cpu_tests` (flags, DAA/ANA/DCR edge cases, stack wrap, HLT/EI timing, memory map), `hw_tests` (shift register, sound latches, ports, disassembler, save states), `ai_tests` (VRAM vision, chase/dodge/fire, key release), and `cputest_com` (full CPUTEST.COM run)
+- Frontend: gamepad input, pause (also pauses audio), versioned save/load state (`F5`/`F9` → `save.bin`; bad files are rejected without touching the running game), ROM size + CRC32 logging, graceful error latch instead of `exit()`
 
 ## Requirements
 
@@ -80,16 +81,18 @@ DIP defaults: 3 ships, extra ship at 1500, coin info ON in demo.
 ## Project Layout
 
 ```text
-CMakeLists.txt
+CMakeLists.txt       # emu_core (SDL-free) library + space_invaders + tests
 include/
   State8080.h        # CPU + hardware state (array memory, bool flags)
   Emulator8080.h     # emulate8080 / emulate_interrupt (0 = error latch)
-  ArcadeHardware.h   # arcade I/O abstraction
+  ArcadeHardware.h   # arcade I/O, port bit masks, memory map
   Disassembler8080.h # disassemble8080_str() API
   Renderer.h         # screen constants + render_vram()
-  Audio.h          # SDL_mixer frontend
-  Input.h            # keyboard + gamepad, port masks
+  Audio.h            # SDL_mixer frontend
+  Assets.h           # resolve_asset(): find roms/ + assets/ from any launch dir
+  Input.h            # keyboard + gamepad -> port bits
   AIPlayer.h         # AI P2: VRAM vision -> IN2 bits
+  SaveState.h        # versioned save-state format
 src/
   main.cpp           # SDL frontend, ROM loading, main loop, --test/--dis modes
   Emulator8080.cpp   # 8080 instruction set (wrapped fetches)
@@ -99,12 +102,15 @@ src/
   Audio.cpp          # sound slots, edge-triggered playback
   Input.cpp          # key/button -> port bits
   AIPlayer.cpp       # AI P2 controller
+  Assets.cpp         # asset path resolution
+  SaveState.cpp      # save/load state
 tests/
   test_cpu.cpp       # cpu_tests: flags, ALU, jumps, stack/fetch wrap
-  test_hardware.cpp  # hw_tests: shift reg, sound, ports, disassembler
+  test_hardware.cpp  # hw_tests: shift reg, sound, ports, disassembler, save states
+  test_ai.cpp        # ai_tests: cannon/target detection, chase, dodge, fire
 roms/
   invaders.e/f/g/h   # game ROMs, loaded at 0x0000/0x0800/0x1000/0x1800
-  CPUTEST.COM / TST8080.COM / 8080PRE.COM  # CPU diagnostics (loaded at 0x100)
+  CPUTEST.COM        # CPU diagnostic (loaded at 0x100; run by ctest)
 assets/
   0.wav (ufo) / 1.wav (shoot) / 2.wav / 3.wav / 4.wav-7.wav (fleet) / 8.wav ...
   + descriptive aliases: ufo.wav, shoot.wav, explosion.wav, extended.wav
@@ -120,6 +126,7 @@ Sound samples in `assets/` are third-party / recorded effects. See `LICENSE.md` 
 
 - 2 MHz / 60 FPS = 33333 cycles/frame, split in halves around RST 1 / RST 2
 - Halted CPU yields its budget until next interrupt (matches hardware); emulation errors stop the frame loop
+- `EI` takes effect after the following instruction, as on the 8080
 - Frame pacing: `SDL_RENDERER_PRESENTVSYNC` + `SDL_GetPerformanceCounter` deadline with anti-spiral reset (replaces plain `SDL_Delay`)
 
 ## License

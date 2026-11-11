@@ -9,23 +9,29 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(SDL2 REQUIRED)
 find_package(SDL2_mixer REQUIRED)
 
-# Define your source files
-set(SOURCES
-    src/main.cpp
+set(WARNING_FLAGS -Wall -Wextra -Wno-unused-parameter)
+
+# Emulator core: CPU, arcade I/O, disassembler, AI, save states. No SDL
+# dependency, so tests build without SDL headers on the include path.
+add_library(emu_core STATIC
     src/Emulator8080.cpp
-    src/Disassembler8080.cpp
     src/ArcadeHardware.cpp
+    src/Disassembler8080.cpp
+    src/AIPlayer.cpp
+    src/SaveState.cpp
+)
+target_include_directories(emu_core PUBLIC include)
+
+# SDL frontend
+add_executable(space_invaders
+    src/main.cpp
+    src/Assets.cpp
     src/Renderer.cpp
     src/Audio.cpp
     src/Input.cpp
-    src/AIPlayer.cpp
 )
-
-# Create the executable target
-add_executable(space_invaders ${SOURCES})
-
-# Include headers directory
-target_include_directories(space_invaders PRIVATE include ${SDL2_INCLUDE_DIRS} ${SDL2_MIXER_INCLUDE_DIRS})
+target_include_directories(space_invaders PRIVATE ${SDL2_INCLUDE_DIRS} ${SDL2_MIXER_INCLUDE_DIRS})
+target_link_libraries(space_invaders PRIVATE emu_core)
 
 # Link SDL2 libraries (prefer imported targets, fall back to variables)
 if (TARGET SDL2::SDL2)
@@ -43,31 +49,27 @@ else()
 endif()
 
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(space_invaders PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    target_compile_options(emu_core PRIVATE ${WARNING_FLAGS})
+    target_compile_options(space_invaders PRIVATE ${WARNING_FLAGS})
 endif()
 
 option(BUILD_TESTS "Build unit tests" ON)
 if (BUILD_TESTS)
     enable_testing()
-    set(CORE_SOURCES
-        src/Emulator8080.cpp
-        src/ArcadeHardware.cpp
-        src/Disassembler8080.cpp
-        src/AIPlayer.cpp
-        src/Input.cpp
-    )
-    add_executable(cpu_tests tests/test_cpu.cpp ${CORE_SOURCES})
-    target_include_directories(cpu_tests PRIVATE include)
-    add_executable(hw_tests tests/test_hardware.cpp ${CORE_SOURCES})
-    target_include_directories(hw_tests PRIVATE include)
-    add_executable(ai_tests tests/test_ai.cpp ${CORE_SOURCES})
-    target_include_directories(ai_tests PRIVATE include)
-    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(cpu_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
-        target_compile_options(hw_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
-        target_compile_options(ai_tests PRIVATE -Wall -Wextra -Wno-unused-parameter)
-    endif()
-    add_test(NAME cpu_tests COMMAND cpu_tests)
-    add_test(NAME hw_tests COMMAND hw_tests)
-    add_test(NAME ai_tests COMMAND ai_tests)
+    set(TEST_SOURCES_cpu_tests tests/test_cpu.cpp)
+    set(TEST_SOURCES_hw_tests tests/test_hardware.cpp)
+    set(TEST_SOURCES_ai_tests tests/test_ai.cpp)
+    foreach(t cpu_tests hw_tests ai_tests)
+        add_executable(${t} ${TEST_SOURCES_${t}})
+        target_link_libraries(${t} PRIVATE emu_core)
+        if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(${t} PRIVATE ${WARNING_FLAGS})
+        endif()
+        add_test(NAME ${t} COMMAND ${t})
+    endforeach()
+
+    # Full instruction-set check against the bundled CP/M diagnostic.
+    add_test(NAME cputest_com
+             COMMAND space_invaders --test ${CMAKE_CURRENT_SOURCE_DIR}/roms/CPUTEST.COM)
+    set_tests_properties(cputest_com PROPERTIES PASS_REGULAR_EXPRESSION "CPU TESTS OK")
 endif()

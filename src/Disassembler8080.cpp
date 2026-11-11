@@ -8,6 +8,10 @@
 // Builds "0xNNNN MNEMONIC" without touching stdout.
 std::string disassemble8080_str(const uint8_t *codebuffer, int pc, int *out_len) {
     const uint8_t *code = &codebuffer[pc];
+    // Operand bytes wrap at 64K like the CPU's fetch, so an instruction at
+    // 0xFFFE/0xFFFF never reads past a 64K memory image. Read lazily: only
+    // opcodes that take operands touch them.
+    auto at = [&](int k) -> uint8_t { return codebuffer[(pc + k) & 0xFFFF]; };
     int opbytes = 1;
 
     std::ostringstream out;
@@ -19,12 +23,12 @@ std::string disassemble8080_str(const uint8_t *codebuffer, int pc, int *out_len)
 
     switch (opcode) {
         case 0x00: out << "NOP"; break;
-        case 0x01: out << "LXI    B,#$" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0x01: out << "LXI    B,#$" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0x02: out << "STAX   B"; break;
         case 0x03: out << "INX    B"; break;
         case 0x04: out << "INR    B"; break;
         case 0x05: out << "DCR    B"; break;
-        case 0x06: out << "MVI    B,#$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0x06: out << "MVI    B,#$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0x07: out << "RLC"; break;
         case 0x08: out << "NOP"; break;
         case 0x09: out << "DAD    B"; break;
@@ -32,16 +36,16 @@ std::string disassemble8080_str(const uint8_t *codebuffer, int pc, int *out_len)
         case 0x0b: out << "DCX    B"; break;
         case 0x0c: out << "INR    C"; break;
         case 0x0d: out << "DCR    C"; break;
-        case 0x0e: out << "MVI    C,#$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0x0e: out << "MVI    C,#$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0x0f: out << "RRC"; break;
 
         case 0x10: out << "NOP"; break;
-        case 0x11: out << "LXI    D,#$" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0x11: out << "LXI    D,#$" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0x12: out << "STAX   D"; break;
         case 0x13: out << "INX    D"; break;
         case 0x14: out << "INR    D"; break;
         case 0x15: out << "DCR    D"; break;
-        case 0x16: out << "MVI    D,#$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0x16: out << "MVI    D,#$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0x17: out << "RAL"; break;
         case 0x18: out << "NOP"; break;
         case 0x19: out << "DAD    D"; break;
@@ -49,41 +53,41 @@ std::string disassemble8080_str(const uint8_t *codebuffer, int pc, int *out_len)
         case 0x1b: out << "DCX    D"; break;
         case 0x1c: out << "INR    E"; break;
         case 0x1d: out << "DCR    E"; break;
-        case 0x1e: out << "MVI    E,#$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0x1e: out << "MVI    E,#$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0x1f: out << "RAR"; break;
 
         case 0x20: out << "NOP"; break; // RIM on 8085
-        case 0x21: out << "LXI    H,#$" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
-        case 0x22: out << "SHLD   $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0x21: out << "LXI    H,#$" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
+        case 0x22: out << "SHLD   $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0x23: out << "INX    H"; break;
         case 0x24: out << "INR    H"; break;
         case 0x25: out << "DCR    H"; break;
-        case 0x26: out << "MVI    H,#$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0x26: out << "MVI    H,#$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0x27: out << "DAA"; break;
         case 0x28: out << "NOP"; break;
         case 0x29: out << "DAD    H"; break;
-        case 0x2a: out << "LHLD   $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0x2a: out << "LHLD   $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0x2b: out << "DCX    H"; break;
         case 0x2c: out << "INR    L"; break;
         case 0x2d: out << "DCR    L"; break;
-        case 0x2e: out << "MVI    L,#$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0x2e: out << "MVI    L,#$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0x2f: out << "CMA"; break;
 
         case 0x30: out << "NOP"; break; // SIM on 8085
-        case 0x31: out << "LXI    SP,#$" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
-        case 0x32: out << "STA    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0x31: out << "LXI    SP,#$" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
+        case 0x32: out << "STA    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0x33: out << "INX    SP"; break;
         case 0x34: out << "INR    M"; break;
         case 0x35: out << "DCR    M"; break;
-        case 0x36: out << "MVI    M,#$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0x36: out << "MVI    M,#$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0x37: out << "STC"; break;
         case 0x38: out << "NOP"; break;
         case 0x39: out << "DAD    SP"; break;
-        case 0x3a: out << "LDA    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0x3a: out << "LDA    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0x3b: out << "DCX    SP"; break;
         case 0x3c: out << "INR    A"; break;
         case 0x3d: out << "DCR    A"; break;
-        case 0x3e: out << "MVI    A,#$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0x3e: out << "MVI    A,#$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0x3f: out << "CMC"; break;
 
         case 0x40: out << "MOV    B,B"; break;
@@ -224,70 +228,70 @@ std::string disassemble8080_str(const uint8_t *codebuffer, int pc, int *out_len)
 
         case 0xc0: out << "RNZ"; break;
         case 0xc1: out << "POP    B"; break;
-        case 0xc2: out << "JNZ    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
-        case 0xc3: out << "JMP    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
-        case 0xc4: out << "CNZ    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xc2: out << "JNZ    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
+        case 0xc3: out << "JMP    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
+        case 0xc4: out << "CNZ    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xc5: out << "PUSH   B"; break;
-        case 0xc6: out << "ADI    #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0xc6: out << "ADI    #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0xc7: out << "RST    0"; break;
         case 0xc8: out << "RZ"; break;
         case 0xc9: out << "RET"; break;
-        case 0xca: out << "JZ     $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xca: out << "JZ     $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xcb: out << "NOP"; break;
-        case 0xcc: out << "CZ     $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
-        case 0xcd: out << "CALL   $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
-        case 0xce: out << "ACI    #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0xcc: out << "CZ     $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
+        case 0xcd: out << "CALL   $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
+        case 0xce: out << "ACI    #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0xcf: out << "RST    1"; break;
 
         case 0xd0: out << "RNC"; break;
         case 0xd1: out << "POP    D"; break;
-        case 0xd2: out << "JNC    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
-        case 0xd3: out << "OUT    #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
-        case 0xd4: out << "CNC    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xd2: out << "JNC    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
+        case 0xd3: out << "OUT    #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
+        case 0xd4: out << "CNC    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xd5: out << "PUSH   D"; break;
-        case 0xd6: out << "SUI    #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0xd6: out << "SUI    #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0xd7: out << "RST    2"; break;
         case 0xd8: out << "RC"; break;
         case 0xd9: out << "NOP"; break;
-        case 0xda: out << "JC     $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
-        case 0xdb: out << "IN     #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
-        case 0xdc: out << "CC     $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xda: out << "JC     $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
+        case 0xdb: out << "IN     #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
+        case 0xdc: out << "CC     $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xdd: out << "NOP"; break;
-        case 0xde: out << "SBI    #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0xde: out << "SBI    #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0xdf: out << "RST    3"; break;
 
         case 0xe0: out << "RPO"; break;
         case 0xe1: out << "POP    H"; break;
-        case 0xe2: out << "JPO    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xe2: out << "JPO    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xe3: out << "XTHL"; break;
-        case 0xe4: out << "CPO    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xe4: out << "CPO    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xe5: out << "PUSH   H"; break;
-        case 0xe6: out << "ANI    #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0xe6: out << "ANI    #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0xe7: out << "RST    4"; break;
         case 0xe8: out << "RPE"; break;
         case 0xe9: out << "PCHL"; break;
-        case 0xea: out << "JPE    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xea: out << "JPE    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xeb: out << "XCHG"; break;
-        case 0xec: out << "CPE    $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xec: out << "CPE    $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xed: out << "NOP"; break;
-        case 0xee: out << "XRI    #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0xee: out << "XRI    #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0xef: out << "RST    5"; break;
 
         case 0xf0: out << "RP"; break;
         case 0xf1: out << "POP    PSW"; break;
-        case 0xf2: out << "JP     $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xf2: out << "JP     $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xf3: out << "DI"; break;
-        case 0xf4: out << "CP     $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xf4: out << "CP     $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xf5: out << "PUSH   PSW"; break;
-        case 0xf6: out << "ORI    #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0xf6: out << "ORI    #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0xf7: out << "RST    6"; break;
         case 0xf8: out << "RM"; break;
         case 0xf9: out << "SPHL"; break;
-        case 0xfa: out << "JM     $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xfa: out << "JM     $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xfb: out << "EI"; break;
-        case 0xfc: out << "CM     $" << std::setw(4) << ((code[2] << 8) | code[1]); opbytes = 3; break;
+        case 0xfc: out << "CM     $" << std::setw(4) << ((at(2) << 8) | at(1)); opbytes = 3; break;
         case 0xfd: out << "NOP"; break;
-        case 0xfe: out << "CPI    #$" << std::setw(2) << (int)code[1]; opbytes = 2; break;
+        case 0xfe: out << "CPI    #$" << std::setw(2) << (int)at(1); opbytes = 2; break;
         case 0xff: out << "RST    7"; break;
 
         default:

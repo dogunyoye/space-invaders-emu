@@ -1,6 +1,6 @@
 #include <cstdio>
 #include "AIPlayer.h"
-#include "Input.h"
+#include "ArcadeHardware.h"
 #include "State8080.h"
 
 static int failures = 0;

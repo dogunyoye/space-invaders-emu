@@ -13,6 +13,16 @@ void arcade_sound_reset() {
     s_out5 = s_out5_prev = 0;
 }
 
+void arcade_sound_restore(uint8_t out3, uint8_t out5) {
+    s_out3 = out3;
+    s_out5 = out5;
+}
+
+void arcade_init_memory_map(State8080 &state) {
+    state.addr_mask = 0x3FFF;
+    state.rom_end = 0x2000;
+}
+
 uint8_t arcade_last_out3() { return s_out3; }
 uint8_t arcade_last_out3_prev() { return s_out3_prev; }
 uint8_t arcade_last_out5() { return s_out5; }

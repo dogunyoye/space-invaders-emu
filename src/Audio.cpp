@@ -1,7 +1,6 @@
 #include "Audio.h"
 
 #include <array>
-#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -10,6 +9,7 @@
 #include <SDL2/SDL_mixer.h>
 
 #include "ArcadeHardware.h"
+#include "Assets.h"
 
 namespace {
 
@@ -19,43 +19,16 @@ namespace {
 struct SoundBank {
     std::array<Mix_Chunk *, 10> chunk{};
     int ufo_channel = -1;
+    bool open = false;  // Mix_OpenAudio succeeded
 
     SoundBank() { chunk.fill(nullptr); }
 };
 
 SoundBank g_sounds;
 
-std::string audio_exe_dir() {
-    char *base = SDL_GetBasePath();
-    if (!base) return "";
-    std::string d(base);
-    SDL_free(base);
-    return d;
-}
-
-std::string audio_resolve(const std::string &relative) {
-    namespace fs = std::filesystem;
-    std::vector<std::string> candidates = {
-        relative,
-        std::string("./") + relative,
-        std::string("../") + relative,
-    };
-    std::string ed = audio_exe_dir();
-    if (!ed.empty()) {
-        candidates.push_back(ed + relative);
-        candidates.push_back(ed + "../" + relative);
-        candidates.push_back(ed + "../../" + relative);
-    }
-    for (const auto &c : candidates) {
-        std::error_code ec;
-        if (fs::exists(c, ec)) return c;
-    }
-    return relative;
-}
-
 void load_sound_slot(int slot, const std::vector<std::string> &names) {
     for (const auto &n : names) {
-        std::string path = audio_resolve(n);
+        std::string path = resolve_asset(n);
         Mix_Chunk *c = Mix_LoadWAV(path.c_str());
         if (c) {
             g_sounds.chunk[(size_t)slot] = c;
@@ -80,6 +53,7 @@ bool init_audio() {
                   << " (continuing without audio)" << std::endl;
         return false;
     }
+    g_sounds.open = true;
     Mix_AllocateChannels(16);
 
     // Accept both MAME-style numeric names and descriptive names.
@@ -131,11 +105,21 @@ void poll_arcade_sounds() {
     arcade_ack_sound();
 }
 
+void set_audio_paused(bool paused) {
+    if (!g_sounds.open) return;
+    if (paused)
+        Mix_Pause(-1);
+    else
+        Mix_Resume(-1);
+}
+
 void shutdown_audio() {
+    if (!g_sounds.open) return;
     if (g_sounds.ufo_channel >= 0) Mix_HaltChannel(g_sounds.ufo_channel);
     for (auto *c : g_sounds.chunk) {
         if (c) Mix_FreeChunk(c);
     }
     g_sounds.chunk.fill(nullptr);
     Mix_CloseAudio();
+    g_sounds.open = false;
 }
